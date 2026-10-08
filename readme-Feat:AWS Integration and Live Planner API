@@ -235,7 +235,7 @@ dev
 ### API Base URL
 
 ```text
-https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+https://zlxk92fdb6.execute-api.us-east-1.amazonaws.com/dev
 ```
 
 ---
@@ -810,7 +810,7 @@ For the current AWS integration, use:
 
 ```text
 API Base:
-https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+https://zlxk92fdb6.execute-api.us-east-1.amazonaws.com/dev
 ```
 
 Main endpoint:
