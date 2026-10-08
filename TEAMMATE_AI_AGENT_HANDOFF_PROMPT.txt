@@ -1,0 +1,246 @@
+HEAT-SAFE ROUTE PLANNER — TEAMMATE AI AGENT HANDOFF
+
+You are joining an existing hackathon project. Treat this file as baseline context.
+Inspect the repository before changing anything. Do not assume the AWS backend is missing.
+
+PROJECT GOAL
+Build a walking route planner that compares alternatives using a Relative Heat Exposure
+Score instead of distance/time alone. A slightly longer route may be preferred if it has
+lower estimated heat exposure.
+
+This is NOT a medical device. Describe the score as a relative route-comparison /
+thermal-comfort indicator, not a medical risk threshold.
+
+AWS BACKEND — ALREADY DEPLOYED AND WORKING
+Region: us-east-1
+API Gateway: heat-safe-route-api
+Stage: dev
+Base URL:
+https://zlxk92fdb6.execute-api.us-east-1.amazonaws.com/dev
+
+Endpoints:
+GET /health
+GET /weather
+GET /routes
+GET /heat-score
+GET /plan-route
+
+Lambda functions:
+heat-safe-route-health
+heat-safe-weather
+heat-safe-routes
+heat-safe-score
+heat-safe-planner
+
+DynamoDB:
+HeatSafe_RoutePlans
+Partition key: request_id (String)
+
+Planner environment variables:
+HEIGIT_API_KEY
+DYNAMODB_TABLE_NAME=HeatSafe_RoutePlans
+
+Do NOT expose or commit the real HEIGIT_API_KEY or AWS credentials.
+
+WHAT /plan-route ALREADY DOES
+GET /plan-route?originLat=...&originLon=...&destLat=...&destLon=...
+
+1. Validates coordinates.
+2. Gets current weather from Open-Meteo.
+3. Gets up to 3 walking alternatives from HeiGIT/openrouteservice.
+4. Uses route geometry and OSM route metadata.
+5. Segments routes.
+6. Reads surface and waytype metadata.
+7. Calculates environmental exposure proxies.
+8. Calculates Relative Heat Exposure Score.
+9. Ranks Fast / Balanced / Heat-Safe routes.
+10. Generates request_id.
+11. Persists a compact route-plan summary to DynamoDB.
+12. Returns route geometry and analytics as JSON.
+
+The frontend should call API Gateway, not HeiGIT/Open-Meteo directly.
+
+CURRENT HEAT MODEL
+Weather weights:
+Temperature = 50%
+Humidity = 15%
+Wind = 10%
+Duration = 25%
+
+Environmental proxy:
+Surface = 60%
+Waytype = 40%
+
+Final heat:
+Weather = 80%
+Environmental proxy = 20%
+
+Categories:
+0–25 Low
+26–50 Moderate
+51–75 High
+76–100 Very High
+
+These are relative project categories, not medical thresholds.
+
+ROUTE MODES
+Fast:
+time 0.60
+distance 0.20
+heat 0.20
+
+Balanced:
+time 0.35
+distance 0.25
+heat 0.40
+
+Heat-Safe:
+time 0.15
+distance 0.15
+heat 0.70
+
+Lower normalized mode score is better.
+
+VERIFIED STATUS
+The deployed API has passed:
+- /health
+- /weather
+- /routes
+- /heat-score
+- /plan-route
+- missing-parameter validation
+
+The planner has returned:
+route_count = 3
+recommended_route = route-2
+storage.status = saved
+
+The local backend unit tests also pass.
+
+REPOSITORY INTENT
+heat-safe-route-planner/
+├── frontend/
+├── backend/
+│   ├── functions/
+│   │   ├── health/
+│   │   ├── weather/
+│   │   ├── routes/
+│   │   ├── heat_score/
+│   │   └── planner/
+│   │       └── lambda_function.py
+│   └── tests/
+├── ml/
+├── infrastructure/
+├── requirements/
+├── scripts/
+├── docs/
+├── .env.example
+├── .gitignore
+└── README.md
+
+NEXT WORK — PRIORITY
+
+1. FRONTEND
+Build React + Vite + TypeScript UI using Leaflet/react-leaflet.
+
+Flow:
+Source input
+Destination input
+  ↓
+GET /plan-route
+  ↓
+Receive route geometries
+  ↓
+Draw 3 routes on Leaflet
+  ↓
+Show heat scores
+  ↓
+Fast / Balanced / Heat-Safe selector
+  ↓
+Highlight recommended route
+  ↓
+Explain why the recommended route wins
+
+The API already returns GeoJSON LineString geometry.
+
+2. BACKEND QUALITY
+Safe work:
+- clearer types
+- tests
+- response schemas
+- external API error handling
+- local development helpers
+- optional history/read endpoint using request_id
+
+Do not silently change the public API contract.
+
+3. AI/ML
+Treat the current deterministic model as the baseline.
+Investigate:
+- feature engineering
+- training/evaluation dataset
+- Random Forest / Gradient Boosting / XGBoost
+- compare ML model against baseline
+- preserve deterministic fallback
+
+4. GIS / ENVIRONMENT
+The current environmental layer uses OSM surface/waytype proxies.
+Future upgrade:
+tree canopy / land cover / shade / solar exposure.
+Do not claim current proxies are actual shade measurements.
+
+DO NOT OVER-ENGINEER
+Do not add EC2, ECS, EKS, RDS, SageMaker, SQS, EventBridge, Bedrock, or Cognito
+unless there is a demonstrated requirement. The current serverless architecture is intentional.
+
+TEAM RULES
+Frontend:
+Use the shared API. No AWS credentials in React.
+
+Backend:
+Keep API names/parameters stable while frontend integration is underway.
+
+ML:
+Keep a fallback to the deterministic model.
+
+Never commit:
+.env
+.env.local
+secret.txt
+AWS access keys
+AWS secret keys
+HEIGIT_API_KEY
+
+Use feature branches:
+git checkout -b feat/<feature-name>
+
+PROTECTED API CONTRACT
+Base:
+https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+
+Main endpoint:
+/plan-route
+
+Parameters:
+originLat
+originLon
+destLat
+destLon
+
+Protected response fields:
+route_count
+routes[]
+routes[].geometry
+routes[].heat
+recommendations
+recommended_route
+request_id
+storage
+
+FIRST ACTION FOR THE AI AGENT
+1. Inspect repository.
+2. Run existing tests.
+3. Read docs/API.md and docs/ARCHITECTURE.md.
+4. Confirm the deployed API is usable.
+5. Build the next requested feature without replacing the AWS backend or changing
+   the protected API contract.

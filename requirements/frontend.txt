@@ -1,0 +1,8 @@
+# Frontend dependencies are managed with npm/package.json.
+# Run from frontend/:
+#
+# npm install
+# npm install leaflet react-leaflet lucide-react
+# npm install -D @types/leaflet
+#
+# Do not install frontend packages with pip.

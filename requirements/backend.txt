@@ -1,0 +1,4 @@
+# Local backend development/testing
+# AWS Lambda provides boto3 in the deployed runtime.
+boto3>=1.34,<2
+pytest>=7,<9
