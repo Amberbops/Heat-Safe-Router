@@ -1,0 +1,837 @@
+# 🔥 Heat-Safe Route Planner
+
+> **A heat-aware walking route planner that helps users choose routes based on estimated heat exposure, not distance and travel time alone.**
+
+Traditional route planners optimize primarily for **distance** or **travel time**. But during hot weather, two walking routes with similar travel times can provide very different levels of thermal exposure.
+
+The **Heat-Safe Route Planner** addresses this by generating multiple walking routes and ranking them using a **Relative Heat Exposure Score** that combines weather conditions, walking duration, and environmental characteristics of each route.
+
+---
+
+## 🌍 Problem
+
+A route that is:
+
+* 1.2 km and 15 minutes
+
+may not necessarily be preferable to one that is:
+
+* 1.5 km and 18 minutes
+
+if the shorter route has significantly greater heat exposure.
+
+Heat exposure during walking can be influenced by factors such as:
+
+* Air temperature
+* Humidity
+* Wind
+* Walking duration
+* Road/path surface
+* Route type
+* Environmental characteristics
+
+The project therefore treats **heat exposure as a route-planning objective** rather than optimizing only for speed or distance.
+
+---
+
+## 💡 Solution
+
+The system:
+
+1. Accepts an origin and destination.
+2. Retrieves current weather conditions.
+3. Generates multiple walking routes.
+4. Segments each route into smaller sections.
+5. Uses OpenStreetMap-derived route metadata as environmental proxies.
+6. Calculates a Relative Heat Exposure Score.
+7. Ranks routes using different optimization modes.
+8. Recommends the most heat-safe option.
+9. Stores a compact route-planning record in DynamoDB.
+10. Returns route geometry and analytics for frontend visualization.
+
+### Route modes
+
+| Mode         | Main objective                           |
+| ------------ | ---------------------------------------- |
+| ⚡ Fast       | Prioritize travel time                   |
+| ⚖️ Balanced  | Balance time, distance and heat          |
+| 🔥 Heat-Safe | Strongly prioritize lower estimated heat |
+
+---
+
+# 🧠 Heat Exposure Model
+
+The current model is deliberately transparent and lightweight.
+
+## Weather contribution
+
+The weather-based score uses:
+
+| Factor           |  Weight |
+| ---------------- | ------: |
+| Temperature      | **50%** |
+| Humidity         | **15%** |
+| Wind             | **10%** |
+| Walking duration | **25%** |
+
+This produces a normalized weather-related heat score between **0 and 100**.
+
+## Environmental contribution
+
+The current environmental layer uses OpenStreetMap route metadata as a proxy:
+
+| Feature |  Weight |
+| ------- | ------: |
+| Surface | **60%** |
+| Waytype | **40%** |
+
+## Final route heat
+
+The route-level score currently combines:
+
+```text
+80%  Weather-based heat
+20%  Environmental proxy
+```
+
+### Relative categories
+
+|  Score | Category  |
+| -----: | --------- |
+|   0–25 | Low       |
+|  26–50 | Moderate  |
+|  51–75 | High      |
+| 76–100 | Very High |
+
+> **Important:** These categories are intended for relative route comparison and thermal-comfort visualization. They are **not medical thresholds or medical risk classifications**.
+
+---
+
+# 🛰️ Data Sources
+
+The current implementation combines several external sources:
+
+### Open-Meteo
+
+Used for current weather data:
+
+* Temperature
+* Relative humidity
+* Wind speed
+* Timezone
+
+### HeiGIT / openrouteservice
+
+Used for:
+
+* Walking routes
+* Alternative route generation
+* Route geometry
+* Route metadata
+
+Current routing profile:
+
+```text
+foot-walking
+```
+
+### OpenStreetMap
+
+Used indirectly through the routing service for route metadata such as:
+
+* Surface
+* Waytype
+
+These are currently used as **environmental proxies**, not direct measurements of shade or solar exposure.
+
+---
+
+# 🏗️ Architecture
+
+```text
+                    ┌────────────────────┐
+                    │   React Frontend   │
+                    │   Leaflet / UI      │
+                    └─────────┬──────────┘
+                              │
+                              │ HTTPS
+                              ▼
+                    ┌────────────────────┐
+                    │    API Gateway     │
+                    │       /dev         │
+                    └─────────┬──────────┘
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │ heat-safe-planner  │
+                    │   AWS Lambda       │
+                    └──────┬─────┬───────┘
+                           │     │
+                 ┌─────────┘     └─────────┐
+                 ▼                         ▼
+        ┌────────────────┐       ┌────────────────┐
+        │ HeiGIT Routing │       │  Open-Meteo    │
+        └───────┬────────┘       └───────┬────────┘
+                │                        │
+                └──────────┬─────────────┘
+                           ▼
+                  ┌──────────────────┐
+                  │ Route Segmentation│
+                  │ + OSM Proxies     │
+                  └─────────┬────────┘
+                            ▼
+                  ┌──────────────────┐
+                  │   Heat Model     │
+                  └─────────┬────────┘
+                            ▼
+                  ┌──────────────────┐
+                  │ Route Optimizer  │
+                  │ Fast/Balanced/   │
+                  │ Heat-Safe        │
+                  └─────────┬────────┘
+                            │
+                    ┌───────┴────────┐
+                    ▼                ▼
+             ┌─────────────┐   ┌──────────────┐
+             │ DynamoDB    │   │ JSON Response │
+             │ RoutePlans  │   │ to Frontend   │
+             └─────────────┘   └──────────────┘
+```
+
+---
+
+# ☁️ AWS Infrastructure
+
+The project uses a serverless AWS architecture.
+
+### AWS services
+
+| Service         | Purpose                               |
+| --------------- | ------------------------------------- |
+| **API Gateway** | Public REST API                       |
+| **AWS Lambda**  | Backend processing                    |
+| **DynamoDB**    | Route-plan persistence                |
+| **CloudWatch**  | Lambda logs and monitoring            |
+| **IAM**         | Access control and Lambda permissions |
+
+### Current AWS region
+
+```text
+us-east-1
+```
+
+### API Gateway
+
+```text
+heat-safe-route-api
+```
+
+Stage:
+
+```text
+dev
+```
+
+### API Base URL
+
+```text
+https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+```
+
+---
+
+# 🚀 Current API
+
+## `GET /health`
+
+Health/connectivity check.
+
+```text
+GET /health
+```
+
+Example response:
+
+```json
+{
+  "status": "ok",
+  "service": "heat-safe-route-planner",
+  "message": "AWS Lambda is working"
+}
+```
+
+---
+
+## `GET /weather`
+
+Returns current weather for a coordinate.
+
+### Parameters
+
+```text
+latitude
+longitude
+```
+
+Example:
+
+```text
+/weather?latitude=22.7196&longitude=75.8577
+```
+
+---
+
+## `GET /routes`
+
+Returns a walking route between two points.
+
+### Parameters
+
+```text
+originLat
+originLon
+destLat
+destLon
+```
+
+Example:
+
+```text
+/routes?originLat=22.7196&originLon=75.8577&destLat=22.7256&destLon=75.8656
+```
+
+---
+
+## `GET /heat-score`
+
+Calculates the relative heat score from weather and duration inputs.
+
+### Parameters
+
+```text
+temperature
+humidity
+wind
+duration
+```
+
+Example:
+
+```text
+/heat-score?temperature=33.5&humidity=26&wind=10.7&duration=16.3
+```
+
+---
+
+# ⭐ `GET /plan-route`
+
+This is the **main application endpoint**.
+
+### Request
+
+```text
+/plan-route?originLat=22.7196&originLon=75.8577&destLat=22.7256&destLon=75.8656
+```
+
+### Parameters
+
+```text
+originLat
+originLon
+destLat
+destLon
+```
+
+### Processing pipeline
+
+```text
+Origin + Destination
+        ↓
+Weather retrieval
+        ↓
+Walking route generation
+        ↓
+Alternative routes
+        ↓
+Route segmentation
+        ↓
+OSM surface / waytype metadata
+        ↓
+Environmental proxy
+        ↓
+Heat calculation
+        ↓
+Route normalization
+        ↓
+Fast / Balanced / Heat-Safe ranking
+        ↓
+Recommended route
+        ↓
+DynamoDB persistence
+```
+
+### Response contains
+
+```text
+status
+request_id
+origin
+destination
+weather
+route_count
+routes[]
+recommendations
+recommended_route
+model
+storage
+```
+
+Each route includes information such as:
+
+```text
+route_id
+distance_km
+duration_min
+geometry
+heat
+normalized
+mode_scores
+```
+
+The `geometry` is returned as a GeoJSON-style `LineString` and can be used directly for map visualization.
+
+---
+
+# 🗄️ DynamoDB
+
+The planner stores a compact summary of route-planning requests in:
+
+```text
+HeatSafe_RoutePlans
+```
+
+Primary key:
+
+```text
+request_id
+```
+
+The stored information includes:
+
+* Request ID
+* Timestamp
+* Origin
+* Destination
+* Weather
+* Route count
+* Route metrics
+* Heat scores
+* Route-ranking information
+* Recommendation
+* Model metadata
+
+Full route geometry is currently returned through the API but is intentionally not persisted in DynamoDB to keep stored records compact.
+
+---
+
+# 📁 Project Structure
+
+```text
+heat-safe-route-planner/
+│
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── ...
+│
+├── backend/
+│   ├── functions/
+│   │   ├── health/
+│   │   │   └── lambda_function.py
+│   │   ├── weather/
+│   │   │   └── lambda_function.py
+│   │   ├── routes/
+│   │   │   └── lambda_function.py
+│   │   ├── heat_score/
+│   │   │   └── lambda_function.py
+│   │   └── planner/
+│   │       └── lambda_function.py
+│   │
+│   └── tests/
+│       ├── test_heat_model.py
+│       ├── test_ranking.py
+│       └── test_validation.py
+│
+├── ml/
+│   ├── data/
+│   ├── notebooks/
+│   ├── src/
+│   └── models/
+│
+├── infrastructure/
+│
+├── requirements/
+│   ├── backend.txt
+│   ├── frontend.txt
+│   └── README.md
+│
+├── scripts/
+│   └── smoke_test.ps1
+│
+├── docs/
+│   ├── API.md
+│   ├── ARCHITECTURE.md
+│   ├── AWS_RESOURCES.md
+│   ├── DAY2_STATUS.md
+│   └── TEAM_HANDOFF.md
+│
+├── .env.example
+├── .gitignore
+├── SECURITY.md
+├── TEAMMATE_AI_AGENT_HANDOFF_PROMPT.txt
+└── README.md
+```
+
+---
+
+# 🧪 Testing
+
+The deployed API has been smoke-tested through API Gateway.
+
+Current checks include:
+
+```text
+/health        ✅
+/weather       ✅
+/routes        ✅
+/heat-score    ✅
+/plan-route    ✅
+Missing input  ✅
+DynamoDB save  ✅
+```
+
+The planner has been verified to return:
+
+```text
+route_count = 3
+recommended_route = route-2
+storage.status = saved
+```
+
+Local unit tests cover core heat-model, normalization/ranking, and validation logic.
+
+Run backend tests:
+
+```powershell
+pytest backend/tests -v
+```
+
+Run the API smoke test:
+
+```powershell
+.\scripts\smoke_test.ps1
+```
+
+---
+
+# 💻 Local Development
+
+## Frontend
+
+From the frontend directory:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend can use the deployed API by creating:
+
+```text
+frontend/.env.local
+```
+
+with:
+
+```env
+VITE_API_BASE_URL=https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+```
+
+The frontend does **not** need AWS credentials for normal API usage.
+
+---
+
+## Backend
+
+The deployed Lambda functions currently run in AWS.
+
+For local testing:
+
+```powershell
+pip install -r requirements/backend.txt
+```
+
+Run tests:
+
+```powershell
+pytest backend/tests -v
+```
+
+The deployed backend keeps external API credentials in Lambda environment variables.
+
+---
+
+# 🔐 Security
+
+Never commit:
+
+```text
+.env
+.env.local
+secret.txt
+AWS access keys
+AWS secret keys
+HEIGIT_API_KEY
+```
+
+The project `.gitignore` excludes environment and secret files.
+
+### Important architecture rule
+
+The frontend should call:
+
+```text
+React
+  ↓
+API Gateway
+```
+
+rather than calling external APIs directly.
+
+This keeps:
+
+* API credentials on the backend
+* external integrations centralized
+* frontend code simpler
+* AWS integration controlled from one place
+
+---
+
+# 👥 Team Development
+
+The project is designed for parallel development.
+
+### Frontend
+
+Primary responsibilities:
+
+* React interface
+* Leaflet map
+* source/destination selection
+* route rendering
+* heat visualization
+* route comparison
+* recommendation UI
+
+### Backend
+
+Primary responsibilities:
+
+* API improvements
+* validation
+* testing
+* response schemas
+* local backend organization
+* future API endpoints
+
+### AI/ML
+
+Primary responsibilities:
+
+* improved heat model
+* feature engineering
+* training/evaluation
+* environmental intelligence
+* model comparison
+
+---
+
+# 🛣️ Roadmap
+
+## Phase 1 — Core backend ✅
+
+* [x] AWS Lambda
+* [x] API Gateway
+* [x] Open-Meteo integration
+* [x] HeiGIT routing
+* [x] Alternative routes
+* [x] Route segmentation
+* [x] Environmental proxies
+* [x] Relative heat score
+* [x] Route optimization
+* [x] DynamoDB persistence
+* [x] Backend smoke tests
+* [x] Backend unit tests
+
+## Phase 2 — Product interface 🚧
+
+* [ ] Interactive map
+* [ ] Source/destination selection
+* [ ] Route rendering
+* [ ] Heat-based route visualization
+* [ ] Route comparison cards
+* [ ] Fast / Balanced / Heat-Safe UI
+* [ ] "Why this route?" explanation
+
+## Phase 3 — Environmental intelligence 🔬
+
+* [ ] Tree/canopy features
+* [ ] Land-cover information
+* [ ] Shade estimation
+* [ ] Solar exposure
+* [ ] Improved segment-level environmental scoring
+
+## Phase 4 — AI/ML 🚧
+
+* [ ] Build dataset
+* [ ] Feature engineering
+* [ ] Train baseline ML model
+* [ ] Evaluate model
+* [ ] Compare against deterministic baseline
+* [ ] Integrate lightweight inference
+* [ ] Preserve deterministic fallback
+
+## Phase 5 — Deployment & demo 🚀
+
+* [ ] Production frontend deployment
+* [ ] Final API testing
+* [ ] UI polish
+* [ ] Demo scenario
+* [ ] Architecture visualization
+* [ ] Hackathon presentation
+
+---
+
+# ⚠️ Current Model Limitation
+
+The environmental layer currently uses **OSM surface and waytype proxies**.
+
+Therefore, the current system does **not** directly measure:
+
+* Tree canopy
+* Actual shade
+* Solar radiation
+* Building shadows
+* Pavement temperature
+* Real-time thermal comfort
+
+This is an intentional MVP limitation.
+
+The architecture isolates this layer so it can later be replaced or augmented with more sophisticated GIS or ML features without rewriting the entire route-planning pipeline.
+
+---
+
+# 🎯 Design Philosophy
+
+The project follows a simple principle:
+
+> **A route planner should optimize for how comfortable a journey may feel, not only how quickly it can be completed.**
+
+The system therefore treats:
+
+```text
+Time
++
+Distance
++
+Heat Exposure
+```
+
+as competing route-planning objectives.
+
+The long-term goal is to move from:
+
+```text
+Distance-first routing
+```
+
+toward:
+
+```text
+Context-aware, heat-aware routing
+```
+
+while keeping the system lightweight enough to deploy and operate using serverless infrastructure.
+
+---
+
+# 📌 Current Status
+
+### Backend / AWS
+
+**Core implementation complete and deployed.**
+
+```text
+API Gateway       ✅
+Lambda            ✅
+Routing           ✅
+Weather           ✅
+Heat model        ✅
+Route optimization ✅
+DynamoDB          ✅
+Testing           ✅
+```
+
+### Frontend
+
+**Foundation exists; main map-based experience remains to be built.**
+
+### AI/ML + GIS
+
+**Baseline/proxy implementation exists; advanced environmental intelligence remains future work.**
+
+---
+
+# 👨‍💻 Development Principle
+
+Before adding a new AWS service or major architectural component, first ask:
+
+> **Does the feature require it?**
+
+The current architecture intentionally avoids unnecessary infrastructure complexity. The goal is to build a working, demonstrable product first and introduce additional services only when they provide clear value.
+
+---
+
+## Team Handoff
+
+For the current AWS integration, use:
+
+```text
+API Base:
+https://zlxk92fdb.execute-api.us-east-1.amazonaws.com/dev
+```
+
+Main endpoint:
+
+```text
+GET /plan-route
+```
+
+Read:
+
+```text
+docs/API.md
+docs/ARCHITECTURE.md
+docs/TEAM_HANDOFF.md
+TEAMMATE_AI_AGENT_HANDOFF_PROMPT.txt
+```
+
+before making major changes to the existing backend contract.
+
+---
+
+## License
+
+Add the project's chosen license here before public release.
