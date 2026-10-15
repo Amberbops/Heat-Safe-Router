@@ -1,35 +1,62 @@
-# Environment / secrets
-.env
-.env.*
-!.env.example
-secret.txt
-
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-.venv/
-venv/
-env/
-
-# Node / frontend
+# ==========================================
+# Dependencies & Packages
+# ==========================================
 node_modules/
+frontend/node_modules/
+venv/
+.venv/
+backend/venv/
+
+# ==========================================
+# Build & Distribution Outputs
+# ==========================================
 dist/
+frontend/dist/
 build/
 .vite/
+frontend/.vite/
+frontend/node_modules/.tmp/
+
+# ==========================================
+# Python Cache & Testing
+# ==========================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# ==========================================
+# Environment Variables & Private Secrets
+# ==========================================
+.env
+.env.local
+.env.*.local
+frontend/.env.local
+backend/.env
+secret.txt
+
+# ==========================================
+# Diagnostic Logs & Temp Reports
+# ==========================================
+*.log
 npm-debug.log*
 yarn-debug.log*
-pnpm-debug.log*
+yarn-error.log*
+frontend-diagnostics.txt
+backend-ml-inspection.txt
+planner_deploy.zip
 
-# IDE / OS
-.vscode/
-.idea/
-*.iml
+# ==========================================
+# Operating System & IDE Artifacts
+# ==========================================
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.tsbuildinfo
