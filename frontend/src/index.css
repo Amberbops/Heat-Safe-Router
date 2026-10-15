@@ -1,77 +1,436 @@
+@import 'leaflet/dist/leaflet.css';
+
 :root {
-  --bg-primary: #0b0f19;
-  --bg-surface: #111827;
-  --bg-card: #1f2937;
-  --bg-card-hover: #283548;
-  --border-color: #374151;
-  --border-light: #4b5563;
+  /* Core Palette */
+  --color-forest: #01472e;
+  --color-sage: #ccd5ae;
+  --color-olive: #e9edc9;
+  --color-cream: #fefae0;
+  --color-moss: #a3b18a;
 
-  --text-primary: #f9fafb;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  /* Functional Heat Status Colors */
+  --heat-low: #2e7d32;
+  --heat-moderate: #e9a23b;
+  --heat-high: #d97706;
+  --heat-very-high: #c24134;
 
-  --accent-emerald: #10b981;
-  --accent-emerald-light: #34d399;
-  --accent-emerald-bg: rgba(16, 185, 129, 0.12);
-  --accent-amber: #f59e0b;
-  --accent-amber-bg: rgba(245, 158, 11, 0.12);
-  --accent-cyan: #06b6d4;
-  --accent-cyan-bg: rgba(6, 182, 212, 0.12);
-  --accent-red: #ef4444;
-  --accent-red-bg: rgba(239, 68, 68, 0.12);
+  /* Surfaces & Shadows */
+  --shadow-forest: 0 24px 60px -12px rgba(1, 71, 46, 0.2);
+  --shadow-forest-sm: 0 12px 30px -8px rgba(1, 71, 46, 0.14);
+  --border-forest-subtle: 1px solid rgba(1, 71, 46, 0.14);
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  /* Radii */
+  --radius-section: 5rem;
+  --radius-card: 2.5rem;
+  --radius-floating: 3rem;
+  --radius-pill: 9999px;
+  --radius-input: 1.15rem;
+
+  /* Motion Signature */
+  --ease-editorial: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-reveal: 1.2s;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html,
-body,
-#root {
-  width: 100%;
-  height: 100%;
-  min-height: 100vh;
-  margin: 0;
-  padding: 0;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
+html {
+  scroll-behavior: smooth;
+  background-color: var(--color-sage);
+  color: var(--color-forest);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
 }
 
-/* Custom scrollbar for desktop */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+body {
+  background-color: var(--color-sage);
+  color: var(--color-forest);
+  overflow-x: hidden;
+  line-height: 1.5;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+/* Never use standard black for typography */
+h1, h2, h3, h4, h5, h6, p, span, a, label, button, input, select {
+  color: inherit;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 3px;
+/* Focus Accessibility */
+:focus-visible {
+  outline: 3px solid var(--color-forest);
+  outline-offset: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-light);
+/* Fixed Viewport SVG Noise Overlay */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0.04;
+  pointer-events: none;
+  z-index: 9999;
 }
 
-button {
-  font-family: inherit;
-  cursor: pointer;
+/* Editorial Display Typography */
+.display-hero {
+  font-family: 'Anton', sans-serif;
+  font-size: clamp(4.5rem, 16vw, 19rem);
+  line-height: 0.82;
+  letter-spacing: -0.05em;
+  text-transform: uppercase;
+  color: var(--color-forest);
+}
+
+.display-section {
+  font-family: 'Anton', sans-serif;
+  font-size: clamp(3.25rem, 9.5vw, 11rem);
+  line-height: 0.84;
+  letter-spacing: -0.05em;
+  text-transform: uppercase;
+}
+
+.utility-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+}
+
+/* Reveal Animations */
+.reveal-item {
+  opacity: 0;
+  transform: translateY(100px);
+  transition:
+    opacity var(--duration-reveal) var(--ease-editorial),
+    transform var(--duration-reveal) var(--ease-editorial);
+  will-change: opacity, transform;
+}
+
+.reveal-item.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stagger-1 { transition-delay: 0.08s; }
+.stagger-2 { transition-delay: 0.18s; }
+.stagger-3 { transition-delay: 0.28s; }
+.stagger-4 { transition-delay: 0.38s; }
+
+/* Letter-by-letter Hero Reveal */
+.hero-letter {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(100px);
+  animation: letterReveal 1.2s var(--ease-editorial) forwards;
+}
+
+@keyframes letterReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(100px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Decorative Environmental Floating Animation */
+@keyframes float {
+  0% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  100% {
+    transform: translateY(-20px) rotate(5deg);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite alternate;
+}
+
+.animate-float-delayed {
+  animation: float 7.5s ease-in-out 1.5s infinite alternate;
+}
+
+/* Navigation Bar */
+.fixed-nav {
+  position: fixed;
+  top: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(94vw, 1440px);
+  background: rgba(254, 250, 224, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-pill);
+  border: var(--border-forest-subtle);
+  box-shadow: var(--shadow-forest-sm);
+  padding: 0.85rem 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  z-index: 1000;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  list-style: none;
+}
+
+.nav-link {
+  text-decoration: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--color-forest);
+  opacity: 0.78;
+  transition: opacity 0.3s var(--ease-editorial);
+}
+
+.nav-link:hover {
+  opacity: 1;
+}
+
+/* Pill Buttons */
+.btn-pill-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  background-color: var(--color-forest);
+  color: var(--color-cream);
   border: none;
+  border-radius: var(--radius-pill);
+  padding: 0.9rem 1.75rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 0.45s var(--ease-editorial),
+    box-shadow 0.45s var(--ease-editorial),
+    background-color 0.3s ease;
+}
+
+.btn-pill-primary:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-forest);
+}
+
+.btn-pill-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-pill-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background-color: var(--color-cream);
+  color: var(--color-forest);
+  border: 1.5px solid var(--color-forest);
+  border-radius: var(--radius-pill);
+  padding: 0.9rem 1.75rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    transform 0.45s var(--ease-editorial),
+    background-color 0.3s ease;
+}
+
+.btn-pill-secondary:hover {
+  transform: translateY(-3px);
+  background-color: var(--color-olive);
+}
+
+/* Primary Sections */
+.section-shell {
+  border-radius: var(--radius-section);
+  margin: 1.5rem auto;
+  width: min(96vw, 1520px);
+  padding: clamp(3rem, 6vw, 6.5rem) clamp(1.5rem, 4.5vw, 4.5rem);
+  position: relative;
+}
+
+.card-cream {
+  background-color: var(--color-cream);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-forest);
+  border: var(--border-forest-subtle);
+}
+
+/* Planner Desktop Two-Column Grid (35% / 65%) */
+.planner-grid {
+  display: grid;
+  grid-template-columns: 3.5fr 6.5fr;
+  gap: 2rem;
+  align-items: start;
+  margin-top: 3rem;
+}
+
+.planner-map-wrapper {
+  height: 700px;
+  width: 100%;
+  border-radius: 2rem;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+/* Softly Rounded Inputs */
+.input-editorial {
+  width: 100%;
+  background-color: var(--color-olive);
+  color: var(--color-forest);
+  border: 1.5px solid rgba(1, 71, 46, 0.22);
+  border-radius: var(--radius-input);
+  padding: 0.8rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  transition: border-color 0.25s ease, background-color 0.25s ease;
+}
+
+.input-editorial:focus {
+  border-color: var(--color-forest);
+  background-color: #ffffff;
   outline: none;
 }
 
-input {
-  font-family: inherit;
+/* Route Comparison Cards Grid */
+.routes-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.route-card {
+  background-color: var(--color-cream);
+  border-radius: var(--radius-card);
+  padding: 2rem;
+  border: 2px solid rgba(1, 71, 46, 0.12);
+  box-shadow: var(--shadow-forest-sm);
+  transition:
+    transform 0.55s var(--ease-editorial),
+    box-shadow 0.55s var(--ease-editorial),
+    border-color 0.35s ease;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.route-card:hover {
+  transform: translateY(-8px);
+  box-shadow: var(--shadow-forest);
+}
+
+.route-card.is-selected {
+  border-color: var(--color-forest);
+  box-shadow: 0 28px 65px -10px rgba(1, 71, 46, 0.28);
+}
+
+/* Custom Leaflet DivIcon Markers */
+.heatsafe-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-family: 'Anton', sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 20px rgba(1, 71, 46, 0.35);
+  border: 2.5px solid var(--color-cream);
+}
+
+.heatsafe-marker-origin {
+  background-color: var(--color-forest);
+  color: var(--color-cream);
+}
+
+.heatsafe-marker-dest {
+  background-color: var(--heat-very-high);
+  color: var(--color-cream);
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1080px) {
+  :root {
+    --radius-section: 3rem;
+    --radius-card: 2rem;
+  }
+
+  .nav-links {
+    display: none;
+  }
+
+  .planner-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-map-wrapper {
+    height: 460px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --radius-section: 2.25rem;
+    --radius-card: 1.65rem;
+  }
+
+  .fixed-nav {
+    padding: 0.65rem 1rem;
+  }
+
+  .planner-map-wrapper {
+    height: 380px;
+  }
+}
+
+/* Reduced Motion Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal-item {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .hero-letter {
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }

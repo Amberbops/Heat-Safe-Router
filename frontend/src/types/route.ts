@@ -1,3 +1,10 @@
+export type RecommendationMode = 'fast' | 'balanced' | 'heat_safe';
+
+export interface Coordinates {
+  lat: number;
+  lon: number;
+}
+
 export interface Coordinate {
   latitude: number;
   longitude: number;
@@ -5,90 +12,106 @@ export interface Coordinate {
 
 export interface WeatherData {
   temperature_c: number;
-  humidity_percent: number;
+  relative_humidity: number;
   wind_speed_kmh: number;
-  timezone?: string;
+  weather_code?: number;
+  condition?: string;
+  timestamp?: string;
 }
 
-export interface HeatComponents {
-  temperature?: number;
-  humidity?: number;
-  wind?: number;
-  duration?: number;
+export interface HeatBreakdown {
+  weather_heat_score: number;
+  environmental_exposure_score: number;
+  final_heat_score: number;
+  components?: {
+    temperature_weight?: number;
+    humidity_weight?: number;
+    wind_weight?: number;
+    duration_weight?: number;
+    weather_weight?: number;
+    environmental_proxy_weight?: number;
+    surface_weight?: number;
+    waytype_weight?: number;
+  };
 }
 
-export interface Segment {
-  start_point: { latitude: number; longitude: number };
-  end_point: { latitude: number; longitude: number };
-  distance_km: number;
-  surface_id: number;
-  surface_exposure: number;
-  waytype_id: number;
-  waytype_exposure: number;
-  environmental_exposure: number;
+export interface ModeScores {
+  fast: number;
+  balanced: number;
+  heat_safe: number;
 }
 
-export interface RouteHeat {
-  heat_score: number;
-  category: "Low" | "Moderate" | "High" | "Extreme" | string;
-  weather_heat: number;
-  environmental_exposure: number;
-  components?: HeatComponents;
-  segments?: Segment[];
+export interface RouteGeoJSONGeometry {
+  type: 'LineString';
+  coordinates: [number, number][]; // GeoJSON convention: [longitude, latitude]
 }
 
-export interface RouteItem {
+export interface RouteAlternative {
   route_id: string;
   distance_km: number;
   duration_min: number;
-  geometry?: {
-    coordinates: [number, number][]; // [longitude, latitude]
-    type: string;
-  };
-  heat: RouteHeat;
-  normalized?: Record<string, number>;
-  mode_scores?: {
-    fast?: number;
-    balanced?: number;
-    "heat-safe"?: number;
-  };
+  heat_score: number;
+  heat_category: 'Low Heat' | 'Moderate Heat' | 'High Heat' | 'Very High Heat' | string;
+  weather_heat?: number;
+  environmental_exposure?: number;
+  breakdown?: HeatBreakdown;
+  mode_scores?: ModeScores;
+  geometry: RouteGeoJSONGeometry;
+  summary?: string;
 }
 
-export interface RecommendationSummary {
-  route_id: string;
-  reason?: string;
-  distance_km?: number;
-  duration_min?: number;
-  heat_score?: number;
-}
-
-export interface Recommendations {
-  fast: RecommendationSummary;
-  balanced: RecommendationSummary;
-  "heat-safe": RecommendationSummary;
+export interface RecommendationsMap {
+  fast: string;
+  balanced: string;
+  heat_safe: string;
 }
 
 export interface ModelMetadata {
-  description: string;
-  weather_weights: Record<string, number>;
-  environmental_proxy_weights: Record<string, number>;
-  final_heat_weights: Record<string, number>;
-  note: string;
+  name?: string;
+  type?: 'deterministic' | 'ml' | string;
+  version?: string;
+  ml_enabled?: boolean;
+  feature_schema?: string[];
+  weights?: {
+    weather: number;
+    environmental_proxy: number;
+    weather_components: {
+      temperature: number;
+      humidity: number;
+      wind: number;
+      duration: number;
+    };
+    proxy_components: {
+      surface: number;
+      waytype: number;
+    };
+  };
 }
 
-export interface RoutePlanResponse {
+export interface StorageMetadata {
+  dynamodb_saved?: boolean;
+  status?: string;
+  table?: string;
+  error?: string;
+}
+
+export interface PlanRouteResponse {
   status: string;
   request_id: string;
-  origin: Coordinate;
-  destination: Coordinate;
+  city?: string;
+  origin: Coordinates;
+  destination: Coordinates;
   weather: WeatherData;
   route_count: number;
-  routes: RouteItem[];
-  recommendations: Recommendations;
+  routes: RouteAlternative[];
+  recommendations: RecommendationsMap;
   recommended_route: string;
-  model: ModelMetadata;
-  storage?: {
-    status: string;
-    table: string;
-  };
+  model?: ModelMetadata;
+  storage?: StorageMetadata;
+}
+
+export interface HealthResponse {
+  status: string;
+  service?: string;
+  timestamp?: string;
 }

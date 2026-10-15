@@ -1,126 +1,104 @@
-import React from "react";
-import {
-  X,
-  Cpu,
-  CheckCircle,
-} from "lucide-react";
-import type { ModelMetadata } from "../types/route";
+import type { FC } from 'react';
+import { X, Server, ShieldCheck } from 'lucide-react';
+import { API_BASE_URL } from '../api/plannerApi';
 
 interface SystemInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  model?: ModelMetadata;
+  isApiOnline: boolean | null;
   requestId?: string;
-  storageStatus?: string;
-  tableName?: string;
 }
 
-export const SystemInfoModal: React.FC<SystemInfoModalProps> = ({
+export const SystemInfoModal: FC<SystemInfoModalProps> = ({
   isOpen,
   onClose,
-  model,
+  isApiOnline,
   requestId,
-  storageStatus,
-  tableName,
 }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">
-            <Cpu size={20} className="modal-icon" />
-            <h3>AWS Architecture & Heat Scoring Engine</h3>
-          </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="system-modal-title"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(1, 71, 46, 0.45)',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1.5rem',
+        zIndex: 2000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="card-cream"
+        style={{ maxWidth: '540px', width: '100%', padding: '2.25rem' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span id="system-modal-title" className="utility-label">
+            AWS SYSTEM & TELEMETRY STATUS
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close system info modal"
+            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            <X size={20} />
           </button>
         </div>
 
-        <div className="modal-body">
-          {/* Architecture overview */}
-          <div className="info-section">
-            <h4>Cloud Pipeline Overview</h4>
-            <div className="arch-flow">
-              <div className="arch-node">
-                <span className="node-badge client">Frontend</span>
-                <span>React + Vite</span>
-              </div>
-              <span className="arch-arrow">➔</span>
-              <div className="arch-node">
-                <span className="node-badge gateway">AWS Gateway</span>
-                <span>HTTP REST</span>
-              </div>
-              <span className="arch-arrow">➔</span>
-              <div className="arch-node">
-                <span className="node-badge lambda">AWS Lambda</span>
-                <span>Python 3.12 Planner</span>
-              </div>
-              <span className="arch-arrow">➔</span>
-              <div className="arch-node">
-                <span className="node-badge db">DynamoDB</span>
-                <span>{tableName || "HeatSafe_RoutePlans"}</span>
-              </div>
+        <div
+          style={{
+            marginTop: '1.5rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            fontSize: '0.9rem',
+          }}
+        >
+          <div style={{ backgroundColor: 'var(--color-olive)', padding: '1rem', borderRadius: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
+              <Server size={16} /> API Gateway Endpoint
             </div>
+            <code
+              style={{
+                display: 'block',
+                marginTop: '0.35rem',
+                wordBreak: 'break-all',
+                fontSize: '0.8rem',
+              }}
+            >
+              {API_BASE_URL}
+            </code>
           </div>
 
-          {/* Model Weights Breakdown */}
-          <div className="info-section">
-            <h4>Heat Formula Weights</h4>
-            <div className="weights-table">
-              <div className="weight-row header-row">
-                <span>Domain</span>
-                <span>Weight</span>
-                <span>Inputs</span>
-              </div>
-              <div className="weight-row">
-                <span className="row-domain">Weather Component</span>
-                <span className="row-weight highlight">80%</span>
-                <span className="row-inputs">
-                  Ambient Temperature (50%), Duration (25%), Relative Humidity (15%), Wind Speed (10%)
-                </span>
-              </div>
-              <div className="weight-row">
-                <span className="row-domain">Environmental Proxy</span>
-                <span className="row-weight highlight">20%</span>
-                <span className="row-inputs">
-                  Surface Material (60% - Asphalt/Concrete/Gravel) + Road Category (40% - State/Urban/Footway)
-                </span>
-              </div>
+          <div style={{ backgroundColor: 'var(--color-olive)', padding: '1rem', borderRadius: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
+              <ShieldCheck size={16} /> Live Health Check (/health)
             </div>
-          </div>
-
-          {/* Persistence status */}
-          <div className="info-section">
-            <h4>Telemetry & Audit Storage</h4>
-            <div className="telemetry-box">
-              <div className="telemetry-item">
-                <span className="telemetry-lbl">Request ID:</span>
-                <code className="telemetry-code">{requestId || "N/A"}</code>
-              </div>
-              <div className="telemetry-item">
-                <span className="telemetry-lbl">DynamoDB Status:</span>
-                <span className="telemetry-pill">
-                  <CheckCircle size={13} /> {storageStatus || "saved"}
-                </span>
-              </div>
-              <div className="telemetry-item">
-                <span className="telemetry-lbl">Storage Table:</span>
-                <span className="telemetry-table">{tableName || "HeatSafe_RoutePlans"}</span>
-              </div>
-            </div>
-            <p className="note-text">
-              {model?.note ||
-                "Every route plan is evaluated and persisted in AWS DynamoDB for longitudinal microclimate heat analysis."}
+            <p style={{ marginTop: '0.35rem' }}>
+              Status:{' '}
+              <strong>
+                {isApiOnline === null
+                  ? 'Checking...'
+                  : isApiOnline
+                  ? 'Online (200 OK)'
+                  : 'Unreachable'}
+              </strong>
             </p>
+            {requestId && (
+              <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', opacity: 0.8 }}>
+                Last Request ID: <code>{requestId}</code>
+              </p>
+            )}
           </div>
-        </div>
-
-        <div className="modal-footer">
-          <button className="modal-dismiss-btn" onClick={onClose}>
-            Got it
-          </button>
         </div>
       </div>
     </div>

@@ -1,293 +1,247 @@
-import React, { useEffect } from "react";
+import { useEffect, type FC } from 'react';
 import {
   MapContainer,
   TileLayer,
-  Polyline,
   Marker,
+  Polyline,
   Popup,
   useMap,
   useMapEvents,
-} from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import type { RouteItem, Coordinate } from "../types/route";
+} from 'react-leaflet';
+import L from 'leaflet';
+import type { Coordinates, RouteAlternative } from '../types/route';
 
-// Fix standard Leaflet default icon issues in bundlers
-delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+const originIcon = L.divIcon({
+  className: '',
+  html: `<div class="heatsafe-marker heatsafe-marker-origin">A</div>`,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
 });
 
-// Custom styled div icons for modern pin markers
-const createOriginIcon = () =>
-  L.divIcon({
-    className: "custom-map-marker marker-origin",
-    html: `
-      <div class="marker-pin origin-pin">
-        <span class="marker-dot"></span>
-        <span class="marker-label">A</span>
-      </div>
-    `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 34],
-    popupAnchor: [0, -32],
-  });
+const destinationIcon = L.divIcon({
+  className: '',
+  html: `<div class="heatsafe-marker heatsafe-marker-dest">B</div>`,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
+});
 
-const createDestIcon = () =>
-  L.divIcon({
-    className: "custom-map-marker marker-dest",
-    html: `
-      <div class="marker-pin dest-pin">
-        <span class="marker-dot"></span>
-        <span class="marker-label">B</span>
-      </div>
-    `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 34],
-    popupAnchor: [0, -32],
-  });
-
-interface MapProps {
-  origin: Coordinate;
-  destination: Coordinate;
-  routes: RouteItem[];
-  selectedRouteId: string;
-  recommendedRouteId?: string;
-  onSelectRoute: (routeId: string) => void;
-  onMapClickLocation?: (coord: Coordinate) => void;
-  clickTargetMode: "origin" | "destination" | "none";
+export function getHeatColorHex(score: number, category?: string): string {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('very high') || score >= 80) return '#C24134';
+  if (cat.includes('high') || score >= 60) return '#D97706';
+  if (cat.includes('moderate') || score >= 35) return '#E9A23B';
+  return '#2E7D32';
 }
 
-// Subcomponent to fit map bounds to routes or markers
-function MapBoundsUpdater({
+interface MapViewportUpdaterProps {
+  center: Coordinates;
+  origin: Coordinates | null;
+  destination: Coordinates | null;
+  routes: RouteAlternative[];
+  selectedRouteId: string | null;
+}
+
+const MapViewportUpdater: FC<MapViewportUpdaterProps> = ({
+  center,
   origin,
   destination,
   routes,
-  selectedRoute,
-}: {
-  origin: Coordinate;
-  destination: Coordinate;
-  routes: RouteItem[];
-  selectedRoute?: RouteItem;
-}) {
+}) => {
   const map = useMap();
 
   useEffect(() => {
-    try {
-      const points: [number, number][] = [];
+    if (routes.length > 0) {
+      const allLatLngs: [number, number][] = [];
+      routes.forEach((route) => {
+        route.geometry?.coordinates?.forEach(([lon, lat]) => {
+          // GeoJSON [lon, lat] -> Leaflet [lat, lon]
+          allLatLngs.push([lat, lon]);
+        });
+      });
 
-      // If active route has geometry, fit to it
-      if (selectedRoute?.geometry?.coordinates?.length) {
-        selectedRoute.geometry.coordinates.forEach(([lon, lat]) => {
-          points.push([lat, lon]);
-        });
-      } else if (routes.length > 0) {
-        routes.forEach((r) => {
-          r.geometry?.coordinates?.forEach(([lon, lat]) => {
-            points.push([lat, lon]);
-          });
-        });
-      } else {
-        points.push([origin.latitude, origin.longitude]);
-        points.push([destination.latitude, destination.longitude]);
+      if (allLatLngs.length > 1) {
+        const bounds = L.latLngBounds(allLatLngs);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        return;
       }
-
-      if (points.length > 0) {
-        const bounds = L.latLngBounds(points);
-        map.fitBounds(bounds, {
-          padding: [50, 50],
-          maxZoom: 16,
-          animate: true,
-        });
-      }
-    } catch (err) {
-      console.warn("Could not fit bounds:", err);
     }
-  }, [map, origin, destination, routes, selectedRoute]);
+
+    if (origin && destination) {
+      const bounds = L.latLngBounds([
+        [origin.lat, origin.lon],
+        [destination.lat, destination.lon],
+      ]);
+      map.fitBounds(bounds, { padding: [70, 70], maxZoom: 15 });
+      return;
+    }
+
+    map.setView([center.lat, center.lon], 14);
+  }, [map, center.lat, center.lon, origin, destination, routes]);
 
   return null;
+};
+
+interface MapClickHandlerProps {
+  onMapClick: (coord: Coordinates) => void;
 }
 
-// Subcomponent to handle click on map to set points
-function MapClickHandler({
-  onMapClickLocation,
-  clickTargetMode,
-}: {
-  onMapClickLocation?: (coord: Coordinate) => void;
-  clickTargetMode: "origin" | "destination" | "none";
-}) {
+const MapClickHandler: FC<MapClickHandlerProps> = ({ onMapClick }) => {
   useMapEvents({
     click(e) {
-      if (clickTargetMode !== "none" && onMapClickLocation) {
-        onMapClickLocation({
-          latitude: Number(e.latlng.lat.toFixed(5)),
-          longitude: Number(e.latlng.lng.toFixed(5)),
-        });
-      }
+      onMapClick({
+        lat: Number(e.latlng.lat.toFixed(5)),
+        lon: Number(e.latlng.lng.toFixed(5)),
+      });
     },
   });
-
   return null;
+};
+
+export interface RouteMapProps {
+  cityCenter: Coordinates;
+  origin: Coordinates | null;
+  destination: Coordinates | null;
+  routes: RouteAlternative[];
+  selectedRouteId: string | null;
+  recommendedRouteId: string | null;
+  activeMapClickTarget: 'origin' | 'destination';
+  onMapClickCoordinate: (coord: Coordinates) => void;
+  onSelectRoute: (routeId: string) => void;
 }
 
-export const RouteMap: React.FC<MapProps> = ({
+export const RouteMap: FC<RouteMapProps> = ({
+  cityCenter,
   origin,
   destination,
   routes,
   selectedRouteId,
   recommendedRouteId,
+  activeMapClickTarget,
+  onMapClickCoordinate,
   onSelectRoute,
-  onMapClickLocation,
-  clickTargetMode,
 }) => {
-  const selectedRoute = routes.find((r) => r.route_id === selectedRouteId);
-
-  // Determine polyline color based on role
-  const getRouteColor = (route: RouteItem, isSelected: boolean) => {
-    const isRecommended = route.route_id === recommendedRouteId;
-    if (isSelected) {
-      if (isRecommended) return "#10b981"; // Emerald
-      if (route.mode_scores?.fast !== undefined) return "#f59e0b"; // Amber
-      return "#0284c7"; // Blue
-    }
-    // Inactive routes
-    return "#94a3b8"; // Slate
-  };
-
   return (
-    <div className="map-wrapper">
-      <MapContainer
-        center={[origin.latitude, origin.longitude]}
-        zoom={14}
-        scrollWheelZoom={true}
-        className="map-container"
+    <div
+      className="card-cream"
+      style={{ padding: '1rem', position: 'relative' }}
+      aria-label="Interactive Pedestrian Route Map"
+    >
+      <div
+        style={{
+          position: 'absolute',
+          top: '2rem',
+          right: '2rem',
+          zIndex: 500,
+          backgroundColor: 'rgba(254, 250, 224, 0.92)',
+          backdropFilter: 'blur(12px)',
+          padding: '0.55rem 1rem',
+          borderRadius: '999px',
+          border: '1px solid rgba(1, 71, 46, 0.2)',
+          boxShadow: '0 8px 24px rgba(1, 71, 46, 0.15)',
+          pointerEvents: 'none',
+        }}
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <span className="utility-label" style={{ fontSize: '0.68rem' }}>
+          CLICK MAP TO SET {activeMapClickTarget === 'origin' ? 'ORIGIN (A)' : 'DESTINATION (B)'}
+        </span>
+      </div>
 
-        <MapBoundsUpdater
-          origin={origin}
-          destination={destination}
-          routes={routes}
-          selectedRoute={selectedRoute}
-        />
-
-        <MapClickHandler
-          onMapClickLocation={onMapClickLocation}
-          clickTargetMode={clickTargetMode}
-        />
-
-        {/* Origin Marker */}
-        <Marker
-          position={[origin.latitude, origin.longitude]}
-          icon={createOriginIcon()}
+      <div className="planner-map-wrapper">
+        <MapContainer
+          center={[cityCenter.lat, cityCenter.lon]}
+          zoom={14}
+          style={{ height: '100%', width: '100%' }}
+          scrollWheelZoom={true}
         >
-          <Popup>
-            <div className="marker-popup-content">
-              <strong>Origin (Start)</strong>
-              <div>
-                Lat: {origin.latitude}, Lon: {origin.longitude}
-              </div>
-            </div>
-          </Popup>
-        </Marker>
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
 
-        {/* Destination Marker */}
-        <Marker
-          position={[destination.latitude, destination.longitude]}
-          icon={createDestIcon()}
-        >
-          <Popup>
-            <div className="marker-popup-content">
-              <strong>Destination (End)</strong>
-              <div>
-                Lat: {destination.latitude}, Lon: {destination.longitude}
-              </div>
-            </div>
-          </Popup>
-        </Marker>
+          <MapViewportUpdater
+            center={cityCenter}
+            origin={origin}
+            destination={destination}
+            routes={routes}
+            selectedRouteId={selectedRouteId}
+          />
 
-        {/* Render Inactive Routes first so Active Route renders on top */}
-        {routes
-          .filter((r) => r.route_id !== selectedRouteId)
-          .map((route) => {
-            const coords = (route.geometry?.coordinates || []).map(
-              ([lon, lat]) => [lat, lon] as [number, number]
-            );
+          <MapClickHandler onMapClick={onMapClickCoordinate} />
+
+          {origin && (
+            <Marker position={[origin.lat, origin.lon]} icon={originIcon}>
+              <Popup>
+                <strong>Starting Point (A)</strong>
+                <br />
+                {origin.lat.toFixed(4)}, {origin.lon.toFixed(4)}
+              </Popup>
+            </Marker>
+          )}
+
+          {destination && (
+            <Marker position={[destination.lat, destination.lon]} icon={destinationIcon}>
+              <Popup>
+                <strong>Destination (B)</strong>
+                <br />
+                {destination.lat.toFixed(4)}, {destination.lon.toFixed(4)}
+              </Popup>
+            </Marker>
+          )}
+
+          {routes.map((route) => {
+            const isSelected = route.route_id === selectedRouteId;
+            const isRecommended = route.route_id === recommendedRouteId;
+            const leafletPositions: [number, number][] =
+              route.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
+
+            const strokeColor = getHeatColorHex(route.heat_score, route.heat_category);
 
             return (
               <Polyline
                 key={route.route_id}
-                positions={coords}
+                positions={leafletPositions}
                 pathOptions={{
-                  color: getRouteColor(route, false),
-                  weight: 4,
-                  opacity: 0.5,
-                  dashArray: "6, 6",
+                  color: strokeColor,
+                  weight: isSelected ? 8 : isRecommended ? 6 : 4,
+                  opacity: isSelected ? 0.98 : 0.55,
+                  dashArray: isSelected ? undefined : '6, 8',
                 }}
                 eventHandlers={{
                   click: () => onSelectRoute(route.route_id),
                 }}
               >
                 <Popup>
-                  <div className="route-popup">
-                    <h4>{route.route_id.toUpperCase()}</h4>
-                    <p>Heat Score: {route.heat.heat_score}/100</p>
-                    <p>Duration: {route.duration_min} min</p>
-                    <p>Distance: {route.distance_km} km</p>
-                    <button
-                      className="popup-btn"
-                      onClick={() => onSelectRoute(route.route_id)}
-                    >
-                      Select Route
-                    </button>
+                  <div style={{ fontFamily: 'Inter, sans-serif', color: '#01472e' }}>
+                    <strong style={{ textTransform: 'uppercase' }}>{route.route_id}</strong>
+                    {isRecommended && (
+                      <span
+                        style={{
+                          marginLeft: '0.4rem',
+                          fontSize: '0.7rem',
+                          backgroundColor: '#ccd5ae',
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '4px',
+                        }}
+                      >
+                        Recommended
+                      </span>
+                    )}
+                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem' }}>
+                      Heat Score: <strong>{route.heat_score} / 100</strong> ({route.heat_category})
+                      <br />
+                      Distance: <strong>{route.distance_km.toFixed(2)} km</strong>
+                      <br />
+                      Duration: <strong>{route.duration_min} min</strong>
+                    </div>
                   </div>
                 </Popup>
               </Polyline>
             );
           })}
-
-        {/* Render Selected Route on top with vibrant highlight */}
-        {selectedRoute && (
-          <Polyline
-            key={`selected-${selectedRoute.route_id}`}
-            positions={(selectedRoute.geometry?.coordinates || []).map(
-              ([lon, lat]) => [lat, lon] as [number, number]
-            )}
-            pathOptions={{
-              color: getRouteColor(selectedRoute, true),
-              weight: 6,
-              opacity: 0.95,
-            }}
-          >
-            <Popup>
-              <div className="route-popup">
-                <h4>
-                  {selectedRoute.route_id.toUpperCase()}{" "}
-                  {selectedRoute.route_id === recommendedRouteId
-                    ? "★ Recommended"
-                    : ""}
-                </h4>
-                <p>
-                  <strong>Heat Score:</strong> {selectedRoute.heat.heat_score}/100 (
-                  {selectedRoute.heat.category})
-                </p>
-                <p>
-                  <strong>Duration:</strong> {selectedRoute.duration_min} min
-                </p>
-                <p>
-                  <strong>Distance:</strong> {selectedRoute.distance_km} km
-                </p>
-              </div>
-            </Popup>
-          </Polyline>
-        )}
-      </MapContainer>
+        </MapContainer>
+      </div>
     </div>
   );
 };
+
+export default RouteMap;
