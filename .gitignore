@@ -60,3 +60,5 @@ Thumbs.db
 *.sublime-workspace
 *.sublime-project
 *.tsbuildinfo
+
+frontend.zip

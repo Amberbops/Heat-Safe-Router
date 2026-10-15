@@ -76,22 +76,32 @@ h1, h2, h3, h4, h5, h6, p, span, a, label, button, input, select {
   z-index: 9999;
 }
 
-/* Editorial Display Typography */
+/* ==========================================================================
+   Corrected Editorial Display Typography (Fixes Line Overlap)
+   ========================================================================== */
+
 .display-hero {
   font-family: 'Anton', sans-serif;
-  font-size: clamp(4.5rem, 16vw, 19rem);
-  line-height: 0.82;
-  letter-spacing: -0.05em;
+  font-size: clamp(3rem, 7vw, 6.5rem);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
   text-transform: uppercase;
   color: var(--color-forest);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-width: 100%;
 }
 
 .display-section {
   font-family: 'Anton', sans-serif;
-  font-size: clamp(3.25rem, 9.5vw, 11rem);
-  line-height: 0.84;
-  letter-spacing: -0.05em;
+  font-size: clamp(2.5rem, 5.5vw, 5rem);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
   text-transform: uppercase;
+  color: var(--color-forest);
+  margin-bottom: 1.5rem;
+  word-break: break-word;
 }
 
 .utility-label {
@@ -433,4 +443,75 @@ h1, h2, h3, h4, h5, h6, p, span, a, label, button, input, select {
     opacity: 1 !important;
     transform: none !important;
   }
+}
+/* ==========================================================================
+   HEatsafe Editorial Theme & Spacing Upgrades
+   ========================================================================== */
+
+.display-hero {
+  font-family: 'Anton', sans-serif;
+  font-size: clamp(3.2rem, 7.5vw, 7.2rem);
+  line-height: 0.92;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--color-forest);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 100%;
+}
+
+.hero-letter {
+  display: inline-block;
+  transition: transform 0.25s ease, color 0.25s ease;
+}
+
+.hero-letter:hover {
+  transform: translateY(-6px);
+  color: var(--heat-high);
+}
+
+/* Maximized Spacing & Colored Box Cards with Smooth Hover Animation */
+.card-cream,
+.route-card,
+.section-shell {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 0.3s ease;
+}
+
+.route-card:hover,
+.card-cream:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 24px 50px rgba(1, 71, 46, 0.18);
+}
+
+/* Enhanced Colored Container Boxes */
+.heatsafe-box-olive {
+  background-color: var(--color-olive);
+  border: 1px solid rgba(1, 71, 46, 0.14);
+  border-radius: 1.5rem;
+  padding: 1.75rem 2rem;
+  margin-bottom: 1.5rem;
+  transition: all 0.25s ease;
+}
+
+.heatsafe-box-olive:hover {
+  border-color: var(--color-forest);
+  background-color: rgba(204, 213, 174, 0.65);
+}
+
+.heatsafe-box-cream {
+  background-color: var(--color-cream);
+  border: 1px solid rgba(1, 71, 46, 0.12);
+  border-radius: 1.5rem;
+  padding: 1.75rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-forest-sm);
+  transition: all 0.25s ease;
+}
+
+.heatsafe-box-cream:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-forest-md);
 }

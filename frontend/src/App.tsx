@@ -25,6 +25,7 @@ import { RouteCard } from './components/RouteCard';
 import { RouteAnalytics } from './components/RouteAnalytics';
 import { WeatherWidget } from './components/WeatherWidget';
 import { SystemInfoModal } from './components/SystemInfoModal';
+import { MappyAssistant } from './components/MappyAssistant';
 
 export function App() {
   const [selectedCity, setSelectedCity] = useState<CityConfig>(
@@ -356,7 +357,7 @@ export function App() {
               </div>
 
               <h1 className="display-hero" aria-label="WALK COOLER.">
-                <div>
+                <div style ={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
                   {'WALK'.split('').map((char, idx) => (
                     <span
                       key={`w-${idx}`}
@@ -367,7 +368,7 @@ export function App() {
                     </span>
                   ))}
                 </div>
-                <div>
+                <div style ={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
                   {'COOLER.'.split('').map((char, idx) => (
                     <span
                       key={`c-${idx}`}
@@ -901,6 +902,22 @@ export function App() {
           </div>
         </div>
       </footer>
+
+      <MappyAssistant
+        selectedCity={selectedCity}
+        currentPlan={planResult}
+        selectedRouteId={selectedRouteId}
+        onPlanLoaded={(plan, origin, dest, preferredRouteId) => {
+          setOriginLat(String(origin.lat));
+          setOriginLon(String(origin.lon));
+          setDestLat(String(dest.lat));
+          setDestLon(String(dest.lon));
+          setPlanResult(plan);
+          setSelectedRouteId(preferredRouteId);
+          document.getElementById('route-planner')?.scrollIntoView({ behavior: 'smooth' });
+        }}
+        onSelectRoute={setSelectedRouteId}
+      />
 
       <SystemInfoModal
         isOpen={isSystemModalOpen}
