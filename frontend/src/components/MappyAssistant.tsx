@@ -19,6 +19,8 @@ import {
 import { fetchPlannedRoutes } from '../api/plannerApi';
 import type { CityConfig } from '../config/supportedCities';
 import type { Coordinates, PlanRouteResponse } from '../types/route';
+import { loadAllCoolSpots } from '../config/indoreCoolSpots';
+import type { CoolSpot } from '../types/coolSpot';
 
 interface ChatMessage {
   id: string;
@@ -243,6 +245,9 @@ export const MappyAssistant: FC<MappyAssistantProps> = ({
     import.meta.env.VITE_GOOGLE_API_KEY ||
     ''
   ).trim();
+
+  const announcedSpotsRef = useRef<Set<string>>(new Set());
+  const pendingDetourSpotRef = useRef<CoolSpot | null>(null);
 
   const [savedKey, setSavedKey] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -582,6 +587,35 @@ export const MappyAssistant: FC<MappyAssistantProps> = ({
     } else {
       offRouteCountRef.current = 0;
       setNavStatus('on_route');
+    }
+    // Inside evaluateGpsSample(lat, lon, accM)
+    const activeRouteObj = currentPlan?.routes.find((r) => r.route_id === selectedRouteId);
+    const isHighHeatStretch =
+      (activeRouteObj && activeRouteObj.heat_score >= 52) ||
+      (currentPlan?.weather && currentPlan.weather.temperature_c >= 32);
+
+    if (isHighHeatStretch) {
+      const allSpots = loadAllCoolSpots();
+      for (const spot of allSpots) {
+        if (announcedSpotsRef.current.has(spot.id)) continue;
+        const distM = Math.round(haversineMeters(lat, lon, spot.coords.lat, spot.coords.lon));
+        if (distM <= 140) {
+          announcedSpotsRef.current.add(spot.id);
+          pendingDetourSpotRef.current = spot;
+          appendMessage(
+            'assistant',
+            `💧 COOL SPOT NEARBY: You're passing a high-heat stretch (Heat Score ${
+              activeRouteObj?.heat_score ?? 60
+            }/100). "${spot.name}" (${spot.category.replace('_', ' ')}, ${
+              spot.coolingOffsetC
+            }°C relief) is just ${distM}m away. Say "detour" or tap to route there!`,
+            true,
+            'smart-local',
+            `Heads up! You are on a warm stretch. ${spot.name} is ${distM} meters away. Want to detour?`
+          );
+          break;
+        }
+      }
     }
   };
 

@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { Check, Clock, Footprints, Flame, Sparkles } from 'lucide-react';
+import { Check, Clock, Footprints, Flame, Sparkles, Sun } from 'lucide-react';
 import type { RecommendationsMap, RouteAlternative } from '../types/route';
 import { getHeatColorHex } from './Map';
 
@@ -8,6 +8,18 @@ interface RouteCardProps {
   isSelected: boolean;
   recommendations?: RecommendationsMap;
   onSelect: (routeId: string) => void;
+}
+
+// Helper function to derive or format UV index per route variant if not provided by backend
+function getRouteUvBadge(routeId: string, baseUv = 6.5) {
+  const id = (routeId || '').toLowerCase();
+  if (id.includes('safe') || id.includes('heat-safe')) {
+    return { value: (baseUv * 0.6).toFixed(1), label: 'Low (Shaded)' };
+  }
+  if (id.includes('balanced')) {
+    return { value: (baseUv * 0.85).toFixed(1), label: 'Moderate' };
+  }
+  return { value: baseUv.toFixed(1), label: 'High Exposure' };
 }
 
 export const RouteCard: FC<RouteCardProps> = ({
@@ -32,6 +44,9 @@ export const RouteCard: FC<RouteCardProps> = ({
   const safeFastScore = Number(route?.mode_scores?.fast ?? 0);
   const safeBalancedScore = Number(route?.mode_scores?.balanced ?? 0);
   const safeHeatSafeScore = Number(route?.mode_scores?.heat_safe ?? 0);
+
+  const uvDetails = getRouteUvBadge(routeId);
+  const finalUvValue = route?.uv_index !== undefined ? route.uv_index.toFixed(1) : uvDetails.value;
 
   return (
     <article
@@ -106,27 +121,68 @@ export const RouteCard: FC<RouteCardProps> = ({
           </div>
         )}
 
+        {/* Side-by-Side Heat Score & UV Index Grid */}
         <div
           style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: '0.5rem',
-            margin: '1rem 0 1.35rem',
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '0.6rem',
+            margin: '1rem 0 1.25rem',
           }}
         >
-          <span
+          {/* Heat Score Box */}
+          <div
             style={{
-              fontFamily: 'Anton, sans-serif',
-              fontSize: '3.8rem',
-              lineHeight: 0.9,
-              color: heatColor,
+              backgroundColor: 'rgba(1, 71, 46, 0.05)',
+              border: '1px solid rgba(1, 71, 46, 0.2)',
+              borderRadius: '0.75rem',
+              padding: '0.5rem 0.65rem',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
             }}
           >
-            {Number.isFinite(heatScore) ? heatScore.toFixed(0) : '0'}
-          </span>
-          <span className="utility-label" style={{ opacity: 0.75 }}>
-            / 100 ESTIMATED HEAT SCORE
-          </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', opacity: 0.75 }}>
+              <Flame size={12} style={{ color: heatColor }} />
+              <span style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--color-forest, #01472e)' }}>
+                HEAT SCORE
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', marginTop: '0.2rem' }}>
+              <span style={{ fontFamily: 'Anton, sans-serif', fontSize: '2.2rem', lineHeight: 1, color: heatColor }}>
+                {Number.isFinite(heatScore) ? heatScore.toFixed(0) : '0'}
+              </span>
+              <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>/100</span>
+            </div>
+          </div>
+
+          {/* UV Index Box */}
+          <div
+            style={{
+              backgroundColor: 'rgba(2, 132, 199, 0.06)',
+              border: '1px solid rgba(2, 132, 199, 0.25)',
+              borderRadius: '0.75rem',
+              padding: '0.5rem 0.65rem',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', opacity: 0.85 }}>
+              <Sun size={12} style={{ color: '#0284c7' }} />
+              <span style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.12em', color: '#0284c7' }}>
+                UV INDEX
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginTop: '0.2rem' }}>
+              <span style={{ fontFamily: 'Anton, sans-serif', fontSize: '2.2rem', lineHeight: 1, color: '#0284c7' }}>
+                {finalUvValue}
+              </span>
+              <span style={{ fontSize: '0.58rem', fontWeight: 600, color: '#0284c7', textAlign: 'right', opacity: 0.85 }}>
+                {uvDetails.label}
+              </span>
+            </div>
+          </div>
         </div>
 
         <div

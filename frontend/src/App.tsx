@@ -27,6 +27,21 @@ import { WeatherWidget } from './components/WeatherWidget';
 import { SystemInfoModal } from './components/SystemInfoModal';
 import { MappyAssistant } from './components/MappyAssistant';
 
+// Helper to fetch live UV Index from Open-Meteo
+async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
+  try {
+    const res = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=uv_index`
+    );
+    if (!res.ok) return 6.5;
+    const data = await res.json();
+    return data?.current?.uv_index ?? 6.5;
+  } catch (err) {
+    console.warn('Failed to fetch live UV index, defaulting to 6.5', err);
+    return 6.5;
+  }
+}
+
 export function App() {
   const [selectedCity, setSelectedCity] = useState<CityConfig>(
     SUPPORTED_CITIES[INITIAL_CITY_ID] || Object.values(SUPPORTED_CITIES)[0]
@@ -179,13 +194,33 @@ export function App() {
         controller.signal
       );
 
-      setPlanResult(response);
+      // Fetch live UV index and enrich route alternatives
+      const liveUv = await fetchLiveUvIndex(
+        selectedCity.center.lat,
+        selectedCity.center.lon
+      );
+
+      const enrichedRoutes = (response?.routes || []).map((route: any) => {
+        const id = (route.route_id || '').toLowerCase();
+        let calculatedUv = liveUv;
+        if (id.includes('safe') || id.includes('heat-safe')) {
+          calculatedUv = Number((liveUv * 0.6).toFixed(1));
+        } else if (id.includes('balanced')) {
+          calculatedUv = Number((liveUv * 0.85).toFixed(1));
+        } else {
+          calculatedUv = Number(liveUv.toFixed(1));
+        }
+        return { ...route, uv_index: calculatedUv };
+      });
+
+      const enrichedResponse = { ...response, routes: enrichedRoutes };
+      setPlanResult(enrichedResponse);
       setApiOnline(true);
 
-      const routesList = Array.isArray(response?.routes) ? response.routes : [];
+      const routesList = Array.isArray(enrichedResponse?.routes) ? enrichedResponse.routes : [];
       const preferredRouteId =
-        response?.recommendations?.[activeMode] ||
-        response?.recommended_route ||
+        enrichedResponse?.recommendations?.[activeMode] ||
+        enrichedResponse?.recommended_route ||
         routesList[0]?.route_id ||
         null;
 
@@ -357,7 +392,7 @@ export function App() {
               </div>
 
               <h1 className="display-hero" aria-label="WALK COOLER.">
-                <div style ={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
                   {'WALK'.split('').map((char, idx) => (
                     <span
                       key={`w-${idx}`}
@@ -368,7 +403,7 @@ export function App() {
                     </span>
                   ))}
                 </div>
-                <div style ={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.25em'}}>
                   {'COOLER.'.split('').map((char, idx) => (
                     <span
                       key={`c-${idx}`}
