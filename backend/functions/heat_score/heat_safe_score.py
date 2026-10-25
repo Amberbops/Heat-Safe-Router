@@ -20,7 +20,6 @@ def response(status_code, body):
 def clamp(value, minimum=0, maximum=100):
     return max(minimum, min(value, maximum))
 
-
 def temperature_score(temp):
     """
     Relative temperature contribution.
@@ -31,7 +30,6 @@ def temperature_score(temp):
 
     score = ((temp - 25) / 15) * 100
     return clamp(score)
-
 
 def humidity_score(humidity):
     """
@@ -44,7 +42,6 @@ def humidity_score(humidity):
     score = ((humidity - 30) / 50) * 100
     return clamp(score)
 
-
 def wind_score(wind):
     """
     Higher wind generally reduces perceived heat exposure.
@@ -55,7 +52,6 @@ def wind_score(wind):
 
     score = ((20 - wind) / 20) * 100
     return clamp(score)
-
 
 def duration_score(duration):
     """

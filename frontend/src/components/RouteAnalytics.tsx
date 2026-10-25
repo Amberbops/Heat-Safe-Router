@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import { Cpu, Layers, ShieldAlert, Sun } from 'lucide-react';
 import type { ModelMetadata, RouteAlternative, WeatherData } from '../types/route';
-import { getHeatColorHex } from './Map';
+import {getHeatColorHex} from './Map';
 
 interface RouteAnalyticsProps {
   routes: RouteAlternative[];

@@ -359,3 +359,16 @@ export async function fetchPlannedRoutes(
     storage: payload?.storage,
   };
 }
+export async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
+  try {
+    const res = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=uv_index`
+    );
+    if (!res.ok) return 6.5;
+    const data = await res.json();
+    return data?.current?.uv_index ?? 6.5;
+  } catch (err) {
+    console.warn('Failed to fetch live UV index, defaulting to 6.5', err);
+    return 6.5;
+  }
+}

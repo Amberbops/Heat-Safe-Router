@@ -52,6 +52,7 @@ export interface RouteAlternative {
   duration_min: number;
   heat_score: number;
   heat_category: 'Low Heat' | 'Moderate Heat' | 'High Heat' | 'Very High Heat' | string;
+  uv_index?: number; // Added UV Index field for route UI display
   weather_heat?: number;
   environmental_exposure?: number;
   breakdown?: HeatBreakdown;
