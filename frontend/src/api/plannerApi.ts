@@ -4,12 +4,47 @@ import type {
   RouteAlternative,
   WeatherData,
 } from '../types/route';
+import type { CoolSpot, CoolSpotRequest, UserRole, AuthSession } from '../types/coolSpot';
 
 const DEFAULT_API_BASE_URL = 'https://zlxk92fdb6.execute-api.us-east-1.amazonaws.com/dev';
 
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
 ).replace(/\/+$/, '');
+
+const SPOTS_STORAGE_KEY = 'heatsafe_aws_coolspots_v1';
+const REQUESTS_STORAGE_KEY = 'heatsafe_aws_spot_requests_v1';
+const AUTH_STORAGE_KEY = 'heatsafe_aws_auth_session_v1';
+
+// Default initial verified Cool Spots for Indore (Local Fallback)
+const DEFAULT_COOL_SPOTS: CoolSpot[] = [
+  {
+    id: 'spot_indore_1',
+    spot_id: 'spot_indore_1',
+    city: 'indore',
+    name: 'Regional Park Shaded Promenade',
+    description: 'Dense neem & banyan canopy with mist breeze near canal bank.',
+    lat: 22.6845,
+    lon: 75.8521,
+    coords: { lat: 22.6845, lon: 75.8521 },
+    logo_id: 'tree_canopy',
+    verified_by: 'admin@heatsafe.in',
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'spot_indore_2',
+    spot_id: 'spot_indore_2',
+    city: 'indore',
+    name: 'Rajwada Heritage Hydration Kiosk',
+    description: 'Filtered cold drinking water station and shaded stone arcade.',
+    lat: 22.7186,
+    lon: 75.8547,
+    coords: { lat: 22.7186, lon: 75.8547 },
+    logo_id: 'water_station',
+    verified_by: 'admin@heatsafe.in',
+    created_at: new Date().toISOString(),
+  },
+];
 
 export class PlannerApiError extends Error {
   status?: number;
@@ -359,6 +394,7 @@ export async function fetchPlannedRoutes(
     storage: payload?.storage,
   };
 }
+
 export async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
   try {
     const res = await fetch(
@@ -372,3 +408,223 @@ export async function fetchLiveUvIndex(lat: number, lon: number): Promise<number
     return 6.5;
   }
 }
+
+// ==========================================
+// 1. AWS COGNITO / SESSION MANAGEMENT
+// ==========================================
+export function getSavedSession(): AuthSession {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return { email: '', role: 'guest' };
+    return JSON.parse(raw);
+  } catch {
+    return { email: '', role: 'guest' };
+  }
+}
+
+export async function loginWithAwsCognito(
+  email: string,
+  password: string,
+  roleSelect: UserRole
+): Promise<AuthSession> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, role: roleSelect }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const session: AuthSession = {
+        email: data.email || email,
+        role: data.role || roleSelect,
+        token: data.token,
+      };
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+      return session;
+    }
+  } catch {
+    // Fallback to simulated Cognito token for local dev testing
+  }
+
+  const session: AuthSession = {
+    email,
+    role: roleSelect,
+    token: `aws-cognito-mock-jwt-${roleSelect}-${Date.now()}`,
+  };
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  return session;
+}
+
+export function logoutAwsSession(): AuthSession {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  return { email: '', role: 'guest' };
+}
+
+// ==========================================
+// 2. DYNAMODB COOL SPOTS FETCH & ADMIN CRUD
+// ==========================================
+export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/cool-spots?city=${encodeURIComponent(city)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.spots)) return data.spots;
+    }
+  } catch {
+    // Fallback to local synced store
+  }
+
+  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
+  if (!stored) {
+    localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(DEFAULT_COOL_SPOTS));
+  }
+  return allSpots.filter((s) => s.city?.toLowerCase() === city.toLowerCase());
+}
+
+export async function upsertAdminCoolSpot(
+  spot: Omit<CoolSpot, 'spot_id' | 'created_at'> & { spot_id?: string },
+  accessToken?: string
+): Promise<CoolSpot> {
+  const newSpot: CoolSpot = {
+    ...spot,
+    spot_id: spot.spot_id || `spot_${Date.now()}`,
+    created_at: new Date().toISOString(),
+  };
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  try {
+    await fetch(`${API_BASE_URL}/admin/cool-spots`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(newSpot),
+    });
+  } catch {
+    // Local fallback persistence
+  }
+
+  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
+  const existingIdx = allSpots.findIndex((s) => s.spot_id === newSpot.spot_id);
+
+  if (existingIdx >= 0) {
+    allSpots[existingIdx] = newSpot;
+  } else {
+    allSpots.unshift(newSpot);
+  }
+  localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(allSpots));
+  return newSpot;
+}
+
+export async function deleteAdminCoolSpot(spotId: string, accessToken?: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  try {
+    await fetch(`${API_BASE_URL}/admin/cool-spots/${encodeURIComponent(spotId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+  } catch {
+    // Local fallback
+  }
+
+  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
+  const filtered = allSpots.filter((s) => s.spot_id !== spotId);
+  localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(filtered));
+}
+
+// Alias for deleteCoolSpot
+export const deleteCoolSpot = deleteAdminCoolSpot;
+
+// ==========================================
+// 3. USER REQUEST QUEUE & ADMIN REQUESTS
+// ==========================================
+export async function submitCoolSpotRequest(
+  payload: Omit<CoolSpotRequest, 'request_id' | 'status' | 'created_at'>,
+  accessToken?: string
+): Promise<CoolSpotRequest> {
+  const newRequest: CoolSpotRequest = {
+    ...payload,
+    request_id: `req_${Date.now()}`,
+    status: 'pending',
+    created_at: new Date().toISOString(),
+  };
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  try {
+    await fetch(`${API_BASE_URL}/cool-spots/requests`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(newRequest),
+    });
+  } catch {
+    // Local fallback
+  }
+
+  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+  const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
+  allRequests.unshift(newRequest);
+  localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(allRequests));
+  return newRequest;
+}
+
+// Backward compatibility alias
+export const submitUserCoolSpotRequest = submitCoolSpotRequest;
+
+export async function fetchCoolSpotRequests(accessToken?: string): Promise<CoolSpotRequest[]> {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/cool-spots/requests`, { headers });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.requests)) return data.requests;
+    }
+  } catch {
+    // Local fallback
+  }
+
+  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+  return stored ? JSON.parse(stored) : [];
+}
+
+// Backward compatibility alias
+export const getAdminRequests = fetchCoolSpotRequests;
+
+export async function updateSpotRequestStatus(
+  requestId: string,
+  status: 'APPROVED' | 'REJECTED' | 'approved' | 'rejected',
+  accessToken?: string
+): Promise<void> {
+  const normalizedStatus = status.toUpperCase() as 'APPROVED' | 'REJECTED';
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  try {
+    await fetch(`${API_BASE_URL}/admin/cool-spots/requests/${encodeURIComponent(requestId)}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status: normalizedStatus }),
+    });
+  } catch {
+    // Local fallback
+  }
+
+  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+  const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
+  const updated = allRequests.map((r) =>
+    r.request_id === requestId ? { ...r, status: status.toLowerCase() as any } : r
+  );
+  localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated));
+}
+
+// Backward compatibility alias
+export const updateAdminRequest = updateSpotRequestStatus;

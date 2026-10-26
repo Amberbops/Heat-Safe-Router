@@ -26,7 +26,13 @@ import { RouteAnalytics } from './components/RouteAnalytics';
 import { WeatherWidget } from './components/WeatherWidget';
 import { SystemInfoModal } from './components/SystemInfoModal';
 import { MappyAssistant } from './components/MappyAssistant';
-
+import { CoolSpotPortal } from './components/CoolSpotPortal';
+import {
+  fetchCoolSpots,
+  fetchCoolSpotRequests,
+  getSavedSession,
+} from './api/plannerApi';
+import type { AuthSession, CoolSpot, CoolSpotRequest } from './types/coolSpot';
 // Helper to fetch live UV Index from Open-Meteo
 async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
   try {
@@ -69,6 +75,20 @@ export function App() {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [activeMode, setActiveMode] = useState<RecommendationMode>('heat_safe');
   const [isSystemModalOpen, setIsSystemModalOpen] = useState<boolean>(false);
+  const [authSession, setAuthSession] = useState<AuthSession>(() => getSavedSession());
+  const [coolSpots, setCoolSpots] = useState<CoolSpot[]>([]);
+  const [spotRequests, setSpotRequests] = useState<CoolSpotRequest[]>([]);
+
+  const refreshCoolSpotData = async () => {
+    const spots = await fetchCoolSpots(selectedCity.id);
+    setCoolSpots(spots);
+    const reqs = await fetchCoolSpotRequests();
+    setSpotRequests(reqs);
+  };
+
+  useEffect(() => {
+    refreshCoolSpotData();
+  }, [selectedCity.id, authSession.role]);
 
   const activeRequestController = useRef<AbortController | null>(null);
 
@@ -312,6 +332,11 @@ export function App() {
             <li>
               <a href="#analytics" className="nav-link">
                 IMPACT
+              </a>
+            </li>
+            <li>
+              <a href="#cool-spots-portal" className="nav-link">
+                {authSession.role === 'admin' ? 'ADMIN CONSOLE' : 'COOL SPOTS'}
               </a>
             </li>
           </ul>
@@ -700,6 +725,22 @@ export function App() {
           weather={planResult?.weather || null}
           model={planResult?.model}
           onSelectRoute={setSelectedRouteId}
+        />
+        
+        <CoolSpotPortal
+          cityId={selectedCity.id}
+          cityLabel={selectedCity?.label || 'Indore'}
+          defaultCoords={selectedCity?.center || { lat: 22.7196, lon: 75.8577 }}
+          session={authSession}
+          onSessionChange={setAuthSession}
+          coolSpots={coolSpots}
+          requests={spotRequests}
+          onRefreshData={refreshCoolSpotData}
+          onFocusSpotOnMap={(lat, lon) => {
+            setDestLat(String(lat));
+            setDestLon(String(lon));
+            document.getElementById('route-planner')?.scrollIntoView({ behavior: 'smooth' });
+          }}
         />
 
         <section

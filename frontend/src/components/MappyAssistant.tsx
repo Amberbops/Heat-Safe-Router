@@ -598,7 +598,10 @@ export const MappyAssistant: FC<MappyAssistantProps> = ({
       const allSpots = loadAllCoolSpots();
       for (const spot of allSpots) {
         if (announcedSpotsRef.current.has(spot.id)) continue;
-        const distM = Math.round(haversineMeters(lat, lon, spot.coords.lat, spot.coords.lon));
+        if (!spot.coords) continue;
+        const spotLat = Array.isArray(spot.coords) ? spot.coords[0] : spot.coords.lat;
+        const spotLon = Array.isArray(spot.coords) ? spot.coords[1] : spot.coords.lon;
+        const distM = Math.round(haversineMeters(lat, lon, spotLat, spotLon));
         if (distM <= 140) {
           announcedSpotsRef.current.add(spot.id);
           pendingDetourSpotRef.current = spot;
@@ -606,7 +609,7 @@ export const MappyAssistant: FC<MappyAssistantProps> = ({
             'assistant',
             `💧 COOL SPOT NEARBY: You're passing a high-heat stretch (Heat Score ${
               activeRouteObj?.heat_score ?? 60
-            }/100). "${spot.name}" (${spot.category.replace('_', ' ')}, ${
+            }/100). "${spot.name}" (${spot.category?.replace('_', ' ') ?? 'refuge'}}, ${
               spot.coolingOffsetC
             }°C relief) is just ${distM}m away. Say "detour" or tap to route there!`,
             true,

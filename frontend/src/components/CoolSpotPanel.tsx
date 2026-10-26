@@ -8,8 +8,10 @@ import {
   ThumbsUp,
   Trees,
 } from 'lucide-react';
-import type { CoolSpot, CoolSpotCategory, NearbyCoolSpotMatch } from '../types/coolSpot';
 import type { Coordinates } from '../types/route';
+import type { CoolSpot, NearbyCoolSpotMatch, CoolSpotLogoId } from '../types/coolSpot';
+
+type CoolSpotCategory = NonNullable<CoolSpot['category']>;
 
 interface CoolSpotPanelProps {
   allSpots: CoolSpot[];
@@ -21,10 +23,10 @@ interface CoolSpotPanelProps {
   userGps: Coordinates | null;
 }
 
-const CATEGORY_META: Record<
+const CATEGORY_META: Partial<Record<
   CoolSpotCategory,
   { label: string; badgeColor: string; icon: any }
-> = {
+>> = {
   hydration: {
     label: 'WATER / PYAU',
     badgeColor: '#0284c7',
@@ -47,6 +49,13 @@ const CATEGORY_META: Record<
   },
 };
 
+const getCategoryMeta = (category: CoolSpotCategory) =>
+  CATEGORY_META[category] ?? {
+    label: category.replace(/_/g, ' ').toUpperCase(),
+    badgeColor: '#64748b',
+    icon: Droplets,
+  };
+
 export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
   allSpots,
   corridorSpots,
@@ -67,7 +76,7 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
     if (!name.trim()) return;
 
     const coords = userGps || { lat: 22.7215, lon: 75.8755 };
-    const defaultOffsets: Record<CoolSpotCategory, number> = {
+    const defaultOffsets: Partial<Record<CoolSpotCategory, number>> = {
       hydration: -3.2,
       shaded_vendor: -3.8,
       ac_refuge: -7.0,
@@ -76,15 +85,30 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
 
     const newSpot: CoolSpot = {
       id: `crowd-${Date.now()}`,
+      spot_id: `crowd-${Date.now()}`,
       name: name.trim(),
+      city: 'Indore',
+      lat: coords.lat,
+      lon: coords.lon,
+      coords: { lat: coords.lat, lon: coords.lon },
       category,
-      coords,
-      coolingOffsetC: defaultOffsets[category],
+      coolingOffsetC: defaultOffsets[category] ?? -3.2,
       description:
         description.trim() || 'Community-verified cooling & hydration refuge in Indore.',
       openHours,
       upvotes: 1,
       isCrowdsourced: true,
+      logo_id: (
+                category === 'hydration'
+                  ? 'water_station'
+                  : category === 'canopy_park'
+                  ? 'tree_canopy'
+                  : category === 'ac_refuge'
+                  ? 'water_station'
+                  : 'shaded_stall'
+              ) as CoolSpotLogoId,
+      verified_by: 'community@heatsafe.in',
+      created_at: new Date().toISOString(),
     };
 
     onAddCrowdsourcedSpot(newSpot);
@@ -93,8 +117,9 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
     setShowAddForm(false);
   };
 
-  const displayedMatches = corridorSpots.filter((m) =>
-    activeCategories.includes(m.spot.category)
+  const displayedMatches = corridorSpots.filter(
+    (m) =>
+      m.spot.category !== undefined && activeCategories.includes(m.spot.category)
   );
 
   return (
@@ -174,8 +199,16 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
           marginBottom: '1.25rem',
         }}
       >
-        {(Object.keys(CATEGORY_META) as CoolSpotCategory[]).map((cat) => {
-          const meta = CATEGORY_META[cat];
+        {Array.from(
+          new Set([
+            ...(Object.keys(CATEGORY_META) as CoolSpotCategory[]),
+            ...allSpots.flatMap((spot) => (spot.category ? [spot.category] : [])),
+            ...corridorSpots.flatMap(({ spot }) =>
+              spot.category ? [spot.category] : []
+            ),
+          ])
+        ).map((cat) => {
+          const meta = getCategoryMeta(cat);
           const IconComp = meta.icon;
           const isActive = activeCategories.includes(cat);
           return (
@@ -296,11 +329,13 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
         }}
       >
         {displayedMatches.slice(0, 4).map(({ spot, distanceFromRouteM, distanceFromUserM }) => {
-          const meta = CATEGORY_META[spot.category];
+          if (!spot.category) return null;
+
+          const meta = getCategoryMeta(spot.category);
           const IconComp = meta.icon;
           return (
             <div
-              key={spot.id}
+              key={spot.spot_id || spot.id}
               style={{
                 backgroundColor: '#ffffff',
                 borderRadius: '1.2rem',
@@ -347,7 +382,9 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
                       color: '#15803d',
                     }}
                   >
-                    {spot.coolingOffsetC.toFixed(1)}°C Relief
+                    {spot.coolingOffsetC !== undefined
+                      ? `${spot.coolingOffsetC.toFixed(1)}°C Relief`
+                      : 'Relief unavailable'}
                   </span>
                 </div>
 
@@ -387,7 +424,7 @@ export const CoolSpotPanel: FC<CoolSpotPanelProps> = ({
                   {distanceFromRouteM < 900
                     ? `${distanceFromRouteM}m off route`
                     : `${(distanceFromUserM / 1000).toFixed(1)} km away`}{' '}
-                  • <ThumbsUp size={11} style={{ display: 'inline' }} /> {spot.upvotes}
+                  • <ThumbsUp size={11} style={{ display: 'inline' }} /> {spot.upvotes || 1}
                 </span>
 
                 <button

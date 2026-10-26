@@ -2,7 +2,9 @@ import { useMemo, type FC } from 'react';
 import L from 'leaflet';
 import { Marker, Popup, Tooltip } from 'react-leaflet';
 import { Clock, Navigation, ThermometerSnowflake, ThumbsUp } from 'lucide-react';
-import type { CoolSpot, CoolSpotCategory } from '../types/coolSpot';
+import type { CoolSpot } from '../types/coolSpot';
+
+type CoolSpotCategory = NonNullable<CoolSpot['category']>;
 
 export interface CoolSpotMapLayerProps {
   spots: CoolSpot[];
@@ -11,15 +13,16 @@ export interface CoolSpotMapLayerProps {
   onDetourToSpot?: (spot: CoolSpot) => void;
 }
 
-const CATEGORY_VISUALS: Record<
-  CoolSpotCategory,
-  {
-    label: string;
-    bgColor: string;
-    emojiLogo: string;
-    svgMarkup: string;
-  }
-> = {
+type CategoryVisual = {
+  label: string;
+  bgColor: string;
+  emojiLogo: string;
+  svgMarkup: string;
+};
+
+const CATEGORY_VISUALS: Partial<Record<CoolSpotCategory, CategoryVisual>> & {
+  hydration: CategoryVisual;
+} = {
   hydration: {
     label: 'Public Water / Pyau',
     bgColor: '#0284c7',
@@ -47,7 +50,7 @@ const CATEGORY_VISUALS: Record<
 };
 
 function createCategoryDivIcon(category: CoolSpotCategory): L.DivIcon {
-  const vis = CATEGORY_VISUALS[category] || CATEGORY_VISUALS.hydration;
+  const vis = CATEGORY_VISUALS[category] ?? CATEGORY_VISUALS.hydration;
   return L.divIcon({
     className: 'cool-spot-div-icon',
     html: `
@@ -73,28 +76,35 @@ export const CoolSpotMapLayer: FC<CoolSpotMapLayerProps> = ({
       shaded_vendor: createCategoryDivIcon('shaded_vendor'),
       ac_refuge: createCategoryDivIcon('ac_refuge'),
       canopy_park: createCategoryDivIcon('canopy_park'),
-    };
+    } as Partial<Record<CoolSpotCategory, L.DivIcon>> & { hydration: L.DivIcon };
   }, []);
 
   const visibleSpots = useMemo(() => {
     if (!activeCategories || activeCategories.length === 0) return spots;
-    return spots.filter((s) => activeCategories.includes(s.category));
+    return spots.filter((s) => activeCategories.includes(s.category ?? 'hydration'));
   }, [spots, activeCategories]);
 
   return (
     <>
       {visibleSpots.map((spot) => {
-        const vis = CATEGORY_VISUALS[spot.category];
+        if (!spot.coords) return null;
+
+        const position: [number, number] = Array.isArray(spot.coords)
+          ? [spot.coords[0], spot.coords[1]]
+          : [spot.coords.lat, spot.coords.lon];
+
+        const category = spot.category ?? 'hydration';
+        const vis = CATEGORY_VISUALS[category] ?? CATEGORY_VISUALS.hydration;
         const estimatedSpotTemp =
-          ambientTempC !== undefined
+          ambientTempC !== undefined && spot.coolingOffsetC !== undefined
             ? (ambientTempC + spot.coolingOffsetC).toFixed(1)
             : null;
 
         return (
           <Marker
             key={spot.id}
-            position={[spot.coords.lat, spot.coords.lon]}
-            icon={iconsByCategory[spot.category]}
+            position={position}
+            icon={iconsByCategory[category] ?? iconsByCategory.hydration}
           >
             <Tooltip
               direction="top"
@@ -209,7 +219,7 @@ export const CoolSpotMapLayer: FC<CoolSpotMapLayerProps> = ({
                         color: '#15803d',
                       }}
                     >
-                      {spot.coolingOffsetC.toFixed(1)}°C
+                      {spot.coolingOffsetC?.toFixed(1) ?? '—'}°C
                     </span>
                     {estimatedSpotTemp && (
                       <div style={{ fontSize: '0.62rem', opacity: 0.8 }}>
