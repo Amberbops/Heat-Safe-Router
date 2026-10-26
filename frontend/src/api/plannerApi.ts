@@ -16,6 +16,20 @@ const SPOTS_STORAGE_KEY = 'heatsafe_aws_coolspots_v1';
 const REQUESTS_STORAGE_KEY = 'heatsafe_aws_spot_requests_v1';
 const AUTH_STORAGE_KEY = 'heatsafe_aws_auth_session_v1';
 
+// Real-time inter-tab & role synchronization channel
+const syncChannel =
+  typeof window !== 'undefined' && 'BroadcastChannel' in window
+    ? new BroadcastChannel('heatsafe_channel_sync')
+    : null;
+
+function notifySync(type: string, data?: unknown) {
+  try {
+    syncChannel?.postMessage({ type, data, timestamp: Date.now() });
+  } catch {
+    // Non-blocking
+  }
+}
+
 // Default initial verified Cool Spots for Indore (Local Fallback)
 const DEFAULT_COOL_SPOTS: CoolSpot[] = [
   {
@@ -28,6 +42,9 @@ const DEFAULT_COOL_SPOTS: CoolSpot[] = [
     lon: 75.8521,
     coords: { lat: 22.6845, lon: 75.8521 },
     logo_id: 'tree_canopy',
+    coolingOffsetC: 3.5,
+    openHours: '06:00 - 21:00',
+    upvotes: 48,
     verified_by: 'admin@heatsafe.in',
     created_at: new Date().toISOString(),
   },
@@ -41,6 +58,9 @@ const DEFAULT_COOL_SPOTS: CoolSpot[] = [
     lon: 75.8547,
     coords: { lat: 22.7186, lon: 75.8547 },
     logo_id: 'water_station',
+    coolingOffsetC: 2.0,
+    openHours: '08:00 - 22:00',
+    upvotes: 112,
     verified_by: 'admin@heatsafe.in',
     created_at: new Date().toISOString(),
   },
@@ -441,6 +461,7 @@ export async function loginWithAwsCognito(
         token: data.token,
       };
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+      notifySync('SESSION_CHANGED', session);
       return session;
     }
   } catch {
@@ -453,34 +474,122 @@ export async function loginWithAwsCognito(
     token: `aws-cognito-mock-jwt-${roleSelect}-${Date.now()}`,
   };
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  notifySync('SESSION_CHANGED', session);
   return session;
 }
 
 export function logoutAwsSession(): AuthSession {
   localStorage.removeItem(AUTH_STORAGE_KEY);
-  return { email: '', role: 'guest' };
+  const guest: AuthSession = { email: '', role: 'guest' };
+  notifySync('SESSION_CHANGED', guest);
+  return guest;
 }
 
 // ==========================================
 // 2. DYNAMODB COOL SPOTS FETCH & ADMIN CRUD
 // ==========================================
 export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[]> {
+  const normCity = (city || 'indore').toLowerCase();
+
+  let remoteSpots: CoolSpot[] = [];
   try {
     const res = await fetch(`${API_BASE_URL}/cool-spots?city=${encodeURIComponent(city)}`);
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.spots)) return data.spots;
+      if (Array.isArray(data.spots)) {
+        remoteSpots = data.spots;
+      }
     }
   } catch {
-    // Fallback to local synced store
+    // remote fallback
   }
 
-  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
-  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
-  if (!stored) {
-    localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(DEFAULT_COOL_SPOTS));
+  let localSpots: CoolSpot[] = [];
+  try {
+    const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+    localSpots = stored ? JSON.parse(stored) : [];
+  } catch {
+    localSpots = [];
   }
-  return allSpots.filter((s) => s.city?.toLowerCase() === city.toLowerCase());
+
+  // Combine remote spots and local spots
+  const combined: CoolSpot[] = [...remoteSpots];
+  for (const ls of localSpots) {
+    const isDup = combined.some(
+      (s) =>
+        s.spot_id === ls.spot_id ||
+        s.id === ls.id ||
+        (s.name && ls.name && s.name.trim().toLowerCase() === ls.name.trim().toLowerCase())
+    );
+    if (!isDup) {
+      combined.push(ls);
+    }
+  }
+
+  // Always merge all approved user requests into live cool spots
+  try {
+    const rawReqs = localStorage.getItem(REQUESTS_STORAGE_KEY);
+    const allReqs: CoolSpotRequest[] = rawReqs ? JSON.parse(rawReqs) : [];
+    const approvedReqs = allReqs.filter(
+      (r) =>
+        (r.status?.toLowerCase() === 'approved' || (r.status as string) === 'APPROVED') &&
+        Boolean(r.suggested_name)
+    );
+
+    for (const req of approvedReqs) {
+      const exists = combined.some(
+        (s) =>
+          s.id === req.request_id ||
+          s.spot_id === req.request_id ||
+          (s.name && s.name.trim().toLowerCase() === req.suggested_name.trim().toLowerCase())
+      );
+      if (!exists) {
+        combined.unshift({
+          id: req.request_id,
+          spot_id: req.request_id,
+          city: req.city || normCity,
+          name: req.suggested_name,
+          description: req.message,
+          lat: req.lat,
+          lon: req.lon,
+          coords: { lat: req.lat, lon: req.lon },
+          logo_id: req.suggested_logo || 'tree_canopy',
+          coolingOffsetC: 3.0,
+          openHours: '06:00 - 22:00',
+          upvotes: 1,
+          verified_by: req.user_email ? `Verified (${req.user_email})` : 'Admin Verified',
+          created_at: req.created_at || new Date().toISOString(),
+          image_url: req.spot_image_url || undefined,
+        });
+      }
+    }
+  } catch {
+    // safe
+  }
+
+  // Fallback to default cool spots if nothing found
+  if (combined.length === 0) {
+    combined.push(...DEFAULT_COOL_SPOTS);
+  }
+
+  // Save merged state back to storage safely
+  try {
+    // Strip oversized base64 images if quota constrained
+    const safeToStore = combined.map((s) => ({
+      ...s,
+      image_url: s.image_url && s.image_url.length > 50000 ? '' : s.image_url,
+    }));
+    localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(safeToStore));
+  } catch {
+    // Non-blocking
+  }
+
+  // Flexible city filtering
+  return combined.filter((s) => {
+    if (!s.city) return true;
+    const spotCity = s.city.toLowerCase();
+    return spotCity === normCity || spotCity.includes(normCity) || normCity.includes(spotCity);
+  });
 }
 
 export async function upsertAdminCoolSpot(
@@ -490,6 +599,10 @@ export async function upsertAdminCoolSpot(
   const newSpot: CoolSpot = {
     ...spot,
     spot_id: spot.spot_id || `spot_${Date.now()}`,
+    city: spot.city || 'indore',
+    coolingOffsetC: spot.coolingOffsetC ?? 2.5,
+    openHours: spot.openHours || '08:00 - 20:00',
+    upvotes: spot.upvotes ?? 0,
     created_at: new Date().toISOString(),
   };
 
@@ -506,16 +619,32 @@ export async function upsertAdminCoolSpot(
     // Local fallback persistence
   }
 
-  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
-  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
-  const existingIdx = allSpots.findIndex((s) => s.spot_id === newSpot.spot_id);
+  try {
+    const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+    const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : [...DEFAULT_COOL_SPOTS];
+    const existingIdx = allSpots.findIndex((s) => s.spot_id === newSpot.spot_id || s.id === newSpot.id);
 
-  if (existingIdx >= 0) {
-    allSpots[existingIdx] = newSpot;
-  } else {
-    allSpots.unshift(newSpot);
+    if (existingIdx >= 0) {
+      allSpots[existingIdx] = newSpot;
+    } else {
+      allSpots.unshift(newSpot);
+    }
+
+    try {
+      localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(allSpots));
+    } catch {
+      // If quota exceeded, strip heavy images and retry
+      const compact = allSpots.map((s) => ({
+        ...s,
+        image_url: s.image_url && s.image_url.length > 50000 ? '' : s.image_url,
+      }));
+      localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(compact));
+    }
+  } catch {
+    // Safe fallback
   }
-  localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(allSpots));
+
+  notifySync('COOL_SPOTS_UPDATED', newSpot);
   return newSpot;
 }
 
@@ -532,13 +661,18 @@ export async function deleteAdminCoolSpot(spotId: string, accessToken?: string):
     // Local fallback
   }
 
-  const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
-  const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
-  const filtered = allSpots.filter((s) => s.spot_id !== spotId);
-  localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(filtered));
+  try {
+    const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
+    const allSpots: CoolSpot[] = stored ? JSON.parse(stored) : DEFAULT_COOL_SPOTS;
+    const filtered = allSpots.filter((s) => s.spot_id !== spotId);
+    localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(filtered));
+  } catch {
+    // Safe
+  }
+
+  notifySync('COOL_SPOTS_UPDATED', { deletedId: spotId });
 }
 
-// Alias for deleteCoolSpot
 export const deleteCoolSpot = deleteAdminCoolSpot;
 
 // ==========================================
@@ -558,24 +692,48 @@ export async function submitCoolSpotRequest(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
+  // 1. Attempt AWS API Gateway sync
   try {
-    await fetch(`${API_BASE_URL}/cool-spots/requests`, {
+    const res = await fetch(`${API_BASE_URL}/cool-spots/requests`, {
       method: 'POST',
       headers,
       body: JSON.stringify(newRequest),
     });
-  } catch {
-    // Local fallback
+    if (res.ok) {
+      console.info('[AWS Sync] Successfully synced cool spot request to AWS.');
+    } else {
+      console.info(`[AWS Sync] Endpoint returned ${res.status}. Storing in persistent sync queue.`);
+    }
+  } catch (err) {
+    console.info('[AWS Sync] Network/API endpoint unavailable, storing in persistent sync queue.', err);
   }
 
-  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
-  const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
-  allRequests.unshift(newRequest);
-  localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(allRequests));
+  // 2. Persist safely with browser storage quota protection
+  try {
+    const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+    const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
+    const filtered = allRequests.filter((r) => r.request_id !== newRequest.request_id);
+    filtered.unshift(newRequest);
+    localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(filtered));
+  } catch (quotaErr) {
+    console.warn('[Storage] Quota exceeded with image. Storing compact request record without heavy image.', quotaErr);
+    try {
+      const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+      const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
+      const compactRequest: CoolSpotRequest = { ...newRequest, spot_image_url: '' };
+      allRequests.unshift(compactRequest);
+      localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(allRequests));
+    } catch {
+      // Safe fallback
+    }
+  }
+
+  // 3. Broadcast to all open tabs and role views in real time
+  notifySync('NEW_REQUEST', newRequest);
+
   return newRequest;
 }
 
-// Backward compatibility alias
 export const submitUserCoolSpotRequest = submitCoolSpotRequest;
 
 export async function fetchCoolSpotRequests(accessToken?: string): Promise<CoolSpotRequest[]> {
@@ -592,11 +750,14 @@ export async function fetchCoolSpotRequests(accessToken?: string): Promise<CoolS
     // Local fallback
   }
 
-  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
-  return stored ? JSON.parse(stored) : [];
+  try {
+    const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
 }
 
-// Backward compatibility alias
 export const getAdminRequests = fetchCoolSpotRequests;
 
 export async function updateSpotRequestStatus(
@@ -618,13 +779,18 @@ export async function updateSpotRequestStatus(
     // Local fallback
   }
 
-  const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
-  const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
-  const updated = allRequests.map((r) =>
-    r.request_id === requestId ? { ...r, status: status.toLowerCase() as any } : r
-  );
-  localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated));
+  try {
+    const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
+    const allRequests: CoolSpotRequest[] = stored ? JSON.parse(stored) : [];
+    const updated = allRequests.map((r) =>
+      r.request_id === requestId ? { ...r, status: status.toLowerCase() as any } : r
+    );
+    localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated));
+  } catch {
+    // Safe
+  }
+
+  notifySync('REQUEST_STATUS_UPDATED', { requestId, status });
 }
 
-// Backward compatibility alias
 export const updateAdminRequest = updateSpotRequestStatus;

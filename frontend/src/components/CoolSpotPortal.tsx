@@ -190,10 +190,13 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
 
   // Admin 1-Click Verify & Approve User Request
   const handleApproveRequest = async (req: CoolSpotRequest) => {
+    const safeImage = req.spot_image_url && req.spot_image_url.length > 60000 ? '' : req.spot_image_url;
+
     await upsertAdminCoolSpot(
       {
-        id: crypto.randomUUID(),
-        city: req.city,
+        id: req.request_id,
+        spot_id: req.request_id,
+        city: req.city || cityId || 'indore',
         name: req.suggested_name,
         description: req.message,
         lat: req.lat,
@@ -203,13 +206,13 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
           lon: req.lon,
         },
         logo_id: req.suggested_logo,
-        image_url: req.spot_image_url || undefined,
-        verified_by: session.email,
+        image_url: safeImage || undefined,
+        verified_by: session.email || 'Admin',
       },
       session.token
     );
     await updateAdminRequest(req.request_id, 'APPROVED', session.token);
-    setAdminNotice(`Verified & published "${req.suggested_name}" (${req.lat.toFixed(4)}, ${req.lon.toFixed(4)}) to map!`);
+    setAdminNotice(`Verified & published "${req.suggested_name}" to map!`);
     onRefreshData();
     setTimeout(() => setAdminNotice(null), 4000);
   };
@@ -1106,7 +1109,7 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
                           </div>
                         )}
 
-                        {req.status === 'pending' && (
+                        {req.status === 'pending' ? (
                           <div style={{ display: 'flex', gap: '0.65rem' }}>
                             <button
                               type="button"
@@ -1125,7 +1128,22 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
                               <XCircle size={15} /> REJECT
                             </button>
                           </div>
-                        )}
+                        ) : req.status?.toLowerCase() === 'approved' ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.65rem', paddingTop: '0.4rem', borderTop: '1px solid rgba(1,71,46,0.1)' }}>
+                            <span style={{ fontSize: '0.74rem', color: '#15803D', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                              <CheckCircle2 size={15} /> PUBLISHED TO COOL SPOTS
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveRequest(req)}
+                              className="btn-pill-secondary"
+                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.65rem' }}
+                              title="Re-sync this spot to map and cool spots list"
+                            >
+                              🔄 RE-SYNC TO MAP
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })
