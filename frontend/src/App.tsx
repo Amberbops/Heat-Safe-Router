@@ -4,7 +4,7 @@ import {
   ArrowUpRight,
   Sun,
 } from 'lucide-react';
-import { checkApiHealth, fetchPlannedRoutes } from './api/plannerApi';
+import { checkApiHealth, fetchPlannedRoutes } from './api/plannerApi'; 
 import {
   INITIAL_CITY_ID,
   SUPPORTED_CITIES,
@@ -31,13 +31,18 @@ import {
   fetchCoolSpots,
   fetchCoolSpotRequests,
   getSavedSession,
+  handleAuthRedirectCallback,
 } from './api/plannerApi';
+
 import type { AuthSession, CoolSpot, CoolSpotRequest } from './types/coolSpot';
+
+
+
 // Helper to fetch live UV Index from Open-Meteo
 async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
   try {
     const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=uv_index`
+      `${import.meta.env.VITE_WEATHER_API_URL || 'https://api.open-meteo.com/v1/forecast'}?latitude=${lat}&longitude=${lon}&current=uv_index`
     );
     if (!res.ok) return 6.5;
     const data = await res.json();
@@ -76,6 +81,25 @@ export function App() {
   const [activeMode, setActiveMode] = useState<RecommendationMode>('heat_safe');
   const [isSystemModalOpen, setIsSystemModalOpen] = useState<boolean>(false);
   const [authSession, setAuthSession] = useState<AuthSession>(() => getSavedSession());
+
+  useEffect(() => {
+    // Check URL hash for Cognito tokens on mount
+    handleAuthRedirectCallback().then((activeSession) => {
+      if (activeSession.role !== 'guest') {
+        setAuthSession(activeSession);
+      } else {
+        setAuthSession(getSavedSession());
+      }
+    });
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'heatsafe_aws_auth_session_v1') {
+        setAuthSession(getSavedSession());
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
   const [coolSpots, setCoolSpots] = useState<CoolSpot[]>([]);
   const [spotRequests, setSpotRequests] = useState<CoolSpotRequest[]>([]);
 
@@ -269,6 +293,18 @@ export function App() {
   const scrollToPlanner = () => {
     document.getElementById('route-planner')?.scrollIntoView({ behavior: 'smooth' });
   };
+  const [, setSession] = useState<AuthSession>({ email: '', role: 'guest' });
+
+useEffect(() => {
+  // Check URL hash for Cognito tokens on mount
+  handleAuthRedirectCallback().then((activeSession) => {
+    if (activeSession.role !== 'guest') {
+      setSession(activeSession);
+    } else {
+      setSession(getSavedSession());
+    }
+  });
+}, []);
 
   return (
     <>

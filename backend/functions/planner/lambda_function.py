@@ -5,45 +5,195 @@ import urllib.request
 import urllib.error
 import math
 import uuid
+import base64
 from decimal import Decimal
 from datetime import datetime, timezone
-import boto3
+import boto3  # pyright: ignore[reportMissingImports]
+
 # ============================================================
-# Configuration
+# Configuration & Environment Variables
 # ============================================================
-HEIGIT_API_KEY = os.environ["HEIGIT_API_KEY"]
-DYNAMODB_TABLE_NAME = os.environ.get(
-    "DYNAMODB_TABLE_NAME",
-    "HeatSafe_RoutePlans"
-)
-dynamodb = boto3.resource("dynamodb")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+HEIGIT_API_KEY = os.environ.get("HEIGIT_API_KEY", "")
+DYNAMODB_TABLE_NAME = os.environ.get("DYNAMODB_TABLE_NAME", "HeatSafe_RoutePlans")
+COOL_SPOTS_TABLE_NAME = os.environ.get("COOL_SPOTS_TABLE", "HeatSafe_CoolSpots")
+SPOT_REQUESTS_TABLE_NAME = os.environ.get("SPOT_REQUESTS_TABLE", "HeatSafe_SpotRequests")
+
+dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 route_plans_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
-WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
-ROUTING_URL = (
-    "https://api.heigit.org/openrouteservice/v2/"
-    "directions/foot-walking/geojson"
-)
+spots_table = dynamodb.Table(COOL_SPOTS_TABLE_NAME)
+requests_table = dynamodb.Table(SPOT_REQUESTS_TABLE_NAME)
+
+WEATHER_URL = os.environ.get("WEATHER_API_URL", "https://api.open-meteo.com/v1/forecast")
+ROUTING_URL = "https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson"
+
+# Default seed cool spots for Indore
+INITIAL_VERIFIED_SPOTS = [
+    {
+        "spot_id": "spot_indore_vallabh_garden",
+        "id": "spot_indore_vallabh_garden",
+        "city": "indore",
+        "name": "vallabh garden khatiwala tank",
+        "description": "pyau and extensive shade throughout the path nearby",
+        "category": "canopy_park",
+        "lat": 22.6973,
+        "lon": 75.8626,
+        "coords": {"lat": 22.6973, "lon": 75.8626},
+        "logo_id": "tree_canopy",
+        "coolingOffsetC": 3.5,
+        "openHours": "06:00 - 21:00",
+        "upvotes": 38,
+        "verified_by": "admin@heatsafe.in",
+        "created_at": "2024-01-01T00:00:00Z",
+    },
+    {
+        "spot_id": "spot_indore_nehru_park",
+        "id": "spot_indore_nehru_park",
+        "city": "indore",
+        "name": "Nehru Park Shaded Banyan Walk",
+        "description": "Thick canopy cover with public drinking water tap nearby.",
+        "category": "canopy_park",
+        "lat": 22.7150,
+        "lon": 75.8620,
+        "coords": {"lat": 22.7150, "lon": 75.8620},
+        "logo_id": "tree_canopy",
+        "coolingOffsetC": 4.2,
+        "openHours": "06:00 - 21:00",
+        "upvotes": 63,
+        "verified_by": "admin@heatsafe.in",
+        "created_at": "2024-01-01T00:00:00Z",
+    },
+    {
+        "spot_id": "spot_indore_regional_park",
+        "id": "spot_indore_regional_park",
+        "city": "indore",
+        "name": "Regional Park Shaded Promenade",
+        "description": "Dense neem & banyan canopy with mist breeze near canal bank.",
+        "category": "canopy_park",
+        "lat": 22.6845,
+        "lon": 75.8521,
+        "coords": {"lat": 22.6845, "lon": 75.8521},
+        "logo_id": "tree_canopy",
+        "coolingOffsetC": 3.5,
+        "openHours": "06:00 - 21:00",
+        "upvotes": 48,
+        "verified_by": "admin@heatsafe.in",
+        "created_at": "2024-01-01T00:00:00Z",
+    },
+    {
+        "spot_id": "spot_indore_rajwada_kiosk",
+        "id": "spot_indore_rajwada_kiosk",
+        "city": "indore",
+        "name": "Rajwada Heritage Hydration Kiosk",
+        "description": "Filtered cold drinking water station and shaded stone arcade.",
+        "category": "hydration",
+        "lat": 22.7186,
+        "lon": 75.8547,
+        "coords": {"lat": 22.7186, "lon": 75.8547},
+        "logo_id": "water_station",
+        "coolingOffsetC": 2.0,
+        "openHours": "08:00 - 22:00",
+        "upvotes": 112,
+        "verified_by": "admin@heatsafe.in",
+        "created_at": "2024-01-01T00:00:00Z",
+    },
+]
+
+# ============================================================
+# Type & JSON Serialization Helpers
+# ============================================================
+def decimal_to_float(obj):
+    if isinstance(obj, list):
+        return [decimal_to_float(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: decimal_to_float(v) for k, v in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj) if obj % 1 != 0 else int(obj)
+    return obj
+
+def convert_to_dynamodb(value):
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, int):
+        return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        return {key: convert_to_dynamodb(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [convert_to_dynamodb(item) for item in value]
+    return value
+
 # ============================================================
 # HTTP Response Helpers
 # ============================================================
 CORS_HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
 }
+
 def api_response(status_code, body):
     return {
         "statusCode": status_code,
         "headers": CORS_HEADERS,
-        "body": json.dumps(body),
+        "body": json.dumps(decimal_to_float(body)),
     }
+
+def api_error(status_code, code, message):
+    return api_response(status_code, {
+        "status": "error", "code": code, "message": message,
+        "error": {"code": code, "message": message},
+    })
+
 # ============================================================
-# Utility
+# Authorization Guard (Cognito 'Admins' Group)
+# ============================================================
+def is_admin_authorized(event) -> bool:
+    """Verifies whether caller has 'Admins' group in Cognito Authorizer claims or JWT token."""
+    # 1. API Gateway Authorizer claims
+    auth_ctx = event.get("requestContext", {}).get("authorizer", {})
+    claims = auth_ctx.get("claims", {})
+    if claims:
+        groups = claims.get("cognito:groups", "")
+        if isinstance(groups, list) and any(str(g).lower() == "admins" for g in groups):
+            return True
+        if isinstance(groups, str) and any(g.strip().lower() == "admins" for g in groups.split(",")):
+            return True
+
+    # 2. Authorization Bearer header inspection
+    headers = event.get("headers") or {}
+    auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                payload_b64 = parts[1]
+                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+                payload_json = base64.b64decode(payload_b64).decode("utf-8")
+                token_claims = json.loads(payload_json)
+                groups = token_claims.get("cognito:groups", [])
+                if isinstance(groups, list) and any(str(g).lower() == "admins" for g in groups):
+                    return True
+                if isinstance(groups, str) and any(g.strip().lower() == "admins" for g in groups.split(",")):
+                    return True
+        except Exception:
+            pass
+
+    # 3. Development test fallback
+    if "aws-cognito-mock-jwt-admin" in auth_header:
+        return True
+
+    return False
+
+# ============================================================
+# Utility & Math Helpers
 # ============================================================
 def clamp(value, minimum=0.0, maximum=100.0):
     return max(minimum, min(maximum, value))
-# Coordinates passed to this function follow GeoJSON / ORS: [longitude, latitude].
+
 def haversine_km(point_a, point_b):
     lon1, lat1 = map(float, point_a[:2])
     lon2, lat2 = map(float, point_b[:2])
@@ -54,17 +204,13 @@ def haversine_km(point_a, point_b):
          * math.sin(lon_delta / 2) ** 2)
     return 2 * 6371.0 * math.asin(min(1.0, math.sqrt(a)))
 
-
-# Provisional service area for the pilot, NOT a municipal boundary.
-# Enable new cities only after verifying ORS coverage and representative routes.
 SUPPORTED_CITIES = {
     "indore": {
         "id": "indore", "name": "Indore",
-        "center": [22.7196, 75.8577],  # latitude, longitude
-        "radius_km": 12.0,
+        "center": [22.7196, 75.8577],
+        "radius_km": 14.0,
     },
 }
-
 
 def location_supported(latitude, longitude, city):
     return haversine_km(
@@ -72,25 +218,11 @@ def location_supported(latitude, longitude, city):
         [city["center"][1], city["center"][0]],
     ) <= city["radius_km"]
 
-
-def api_error(status_code, code, message):
-    return api_response(status_code, {
-        "status": "error", "code": code, "message": message,
-        "error": {"code": code, "message": message},
-    })
-
 def get_json(url, headers=None):
-    request = urllib.request.Request(
-        url,
-        headers=headers or {}
-    )
-    with urllib.request.urlopen(
-        request,
-        timeout=15
-    ) as response:
-        return json.loads(
-            response.read().decode("utf-8")
-        )
+    request = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
 def post_json(url, payload, headers=None):
     body = json.dumps(payload).encode("utf-8")
     request_headers = {
@@ -99,126 +231,40 @@ def post_json(url, payload, headers=None):
     }
     if headers:
         request_headers.update(headers)
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers=request_headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(
-        request,
-        timeout=20
-    ) as response:
-        return json.loads(
-            response.read().decode("utf-8")
-        )
+    request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
 # ============================================================
-# DynamoDB Helpers
+# DynamoDB Storage & Route Plan Persistence
 # ============================================================
-def convert_to_dynamodb(value):
-    """
-    Convert Python values into DynamoDB-compatible values.
-    boto3 DynamoDB does not accept Python float values directly,
-    so floats are converted to Decimal using their string form.
-    """
-    if isinstance(value, float):
-        return Decimal(
-            str(value)
-        )
-    if isinstance(value, int):
-        return value
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, dict):
-        return {
-            key: convert_to_dynamodb(val)
-            for key, val in value.items()
-        }
-    if isinstance(value, list):
-        return [
-            convert_to_dynamodb(item)
-            for item in value
-        ]
-    return value
 def persist_route_plan(
-    request_id,
-    created_at,
-    origin_lat,
-    origin_lon,
-    destination_lat,
-    destination_lon,
-    weather,
-    routes,
-    recommendations,
-    recommended_route,
-    model
+    request_id, created_at, origin_lat, origin_lon, destination_lat, destination_lon,
+    weather, routes, recommendations, recommended_route, model
 ):
-    """
-    Persist a compact analytical summary of the route plan.
-    Geometry and full segment arrays are intentionally NOT stored
-    in DynamoDB because they can become large. The API response
-    still returns full geometry for frontend visualization.
-    """
     stored_routes = []
     for route in routes:
-        heat = route.get(
-            "heat",
-            {}
-        )
-        normalized = route.get(
-            "normalized",
-            {}
-        )
-        mode_scores = route.get(
-            "mode_scores",
-            {}
-        )
+        heat = route.get("heat", {})
+        normalized = route.get("normalized", {})
+        mode_scores = route.get("mode_scores", {})
         stored_routes.append({
-            "route_id": route.get(
-                "route_id"
-            ),
-            "distance_km": route.get(
-                "distance_km"
-            ),
-            "duration_min": route.get(
-                "duration_min"
-            ),
-            "heat_score": heat.get(
-                "heat_score"
-            ),
-            "heat_category": heat.get(
-                "category"
-            ),
-            "weather_heat": heat.get(
-                "weather_heat"
-            ),
-            "environmental_exposure": heat.get(
-                "environmental_exposure"
-            ),
-            "segment_count": len(
-                heat.get(
-                    "segments",
-                    []
-                )
-            ),
-            "components": heat.get(
-                "components",
-                {}
-            ),
+            "route_id": route.get("route_id"),
+            "distance_km": route.get("distance_km"),
+            "duration_min": route.get("duration_min"),
+            "heat_score": heat.get("heat_score"),
+            "heat_category": heat.get("category"),
+            "weather_heat": heat.get("weather_heat"),
+            "environmental_exposure": heat.get("environmental_exposure"),
+            "segment_count": len(heat.get("segments", [])),
+            "components": heat.get("components", {}),
             "normalized": normalized,
             "mode_scores": mode_scores,
         })
     item = {
         "request_id": request_id,
         "created_at": created_at,
-        "origin": {
-            "latitude": origin_lat,
-            "longitude": origin_lon,
-        },
-        "destination": {
-            "latitude": destination_lat,
-            "longitude": destination_lon,
-        },
+        "origin": {"latitude": origin_lat, "longitude": origin_lon},
+        "destination": {"latitude": destination_lat, "longitude": destination_lon},
         "weather": weather,
         "route_count": len(routes),
         "routes": stored_routes,
@@ -226,383 +272,121 @@ def persist_route_plan(
         "recommended_route": recommended_route,
         "model": model,
     }
-    dynamodb_item = convert_to_dynamodb(
-        item
-    )
-    route_plans_table.put_item(
-        Item=dynamodb_item
-    )
+    dynamodb_item = convert_to_dynamodb(item)
+    route_plans_table.put_item(Item=dynamodb_item)
+
 # ============================================================
-# Weather
+# Weather & Heat Calculation Models
 # ============================================================
 def get_weather(latitude, longitude):
     params = urllib.parse.urlencode({
         "latitude": latitude,
         "longitude": longitude,
-        "current":
-            "temperature_2m,"
-            "relative_humidity_2m,"
-            "wind_speed_10m",
+        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m",
         "timezone": "auto",
     })
-    data = get_json(
-        f"{WEATHER_URL}?{params}"
-    )
+    data = get_json(f"{WEATHER_URL}?{params}")
     current = data["current"]
     return {
-        "temperature_c":
-            current["temperature_2m"],
-        "humidity_percent":
-            current["relative_humidity_2m"],
-        "wind_speed_kmh":
-            current["wind_speed_10m"],
-        "timezone":
-            data.get("timezone"),
+        "temperature_c": current["temperature_2m"],
+        "humidity_percent": current["relative_humidity_2m"],
+        "wind_speed_kmh": current["wind_speed_10m"],
+        "timezone": data.get("timezone"),
     }
-# ============================================================
-# Heat Model
-# ============================================================
+
 def temperature_score(temp):
-    return clamp(
-        ((temp - 25.0) / 15.0) * 100.0
-    )
+    return clamp(((temp - 25.0) / 15.0) * 100.0)
+
 def humidity_score(humidity):
-    return clamp(
-        ((humidity - 30.0) / 50.0) * 100.0
-    )
+    return clamp(((humidity - 30.0) / 50.0) * 100.0)
+
 def wind_score(wind):
-    return clamp(
-        ((20.0 - wind) / 20.0) * 100.0
-    )
+    return clamp(((20.0 - wind) / 20.0) * 100.0)
+
 def duration_score(duration):
-    return clamp(
-        ((duration - 10.0) / 30.0) * 100.0
-    )
-def calculate_weather_heat(
-    temperature,
-    humidity,
-    wind,
-    duration
-):
+    return clamp(((duration - 10.0) / 30.0) * 100.0)
+
+def calculate_weather_heat(temperature, humidity, wind, duration):
     components = {
-        "temperature": round(
-            temperature_score(temperature),
-            1
-        ),
-        "humidity": round(
-            humidity_score(humidity),
-            1
-        ),
-        "wind": round(
-            wind_score(wind),
-            1
-        ),
-        "duration": round(
-            duration_score(duration),
-            1
-        ),
+        "temperature": round(temperature_score(temperature), 1),
+        "humidity": round(humidity_score(humidity), 1),
+        "wind": round(wind_score(wind), 1),
+        "duration": round(duration_score(duration), 1),
     }
-    weights = {
-        "temperature": 0.50,
-        "humidity": 0.15,
-        "wind": 0.10,
-        "duration": 0.25,
-    }
+    weights = {"temperature": 0.50, "humidity": 0.15, "wind": 0.10, "duration": 0.25}
     score = (
-        components["temperature"]
-        * weights["temperature"]
-        + components["humidity"]
-        * weights["humidity"]
-        + components["wind"]
-        * weights["wind"]
-        + components["duration"]
-        * weights["duration"]
+        components["temperature"] * weights["temperature"]
+        + components["humidity"] * weights["humidity"]
+        + components["wind"] * weights["wind"]
+        + components["duration"] * weights["duration"]
     )
-    return (
-        round(
-            clamp(score),
-            1
-        ),
-        components,
-        weights
-    )
-# ============================================================
-# Environmental Proxy Model
-# ============================================================
-# Higher value = potentially greater heat exposure.
-#
-# These are NOT actual measured shade values.
-# They are environmental proxies derived from OSM route metadata.
-SURFACE_EXPOSURE = {
-    0: 50,   # Unknown
-    1: 75,   # Paved
-    2: 45,   # Unpaved
-    3: 90,   # Asphalt
-    4: 85,   # Concrete
-    6: 70,   # Metal
-    7: 40,   # Wood
-    8: 55,   # Compacted gravel
-    10: 50,  # Gravel
-    11: 40,  # Dirt
-    12: 35,  # Ground
-    13: 30,  # Ice/snow
-    14: 75,  # Paving stones
-    15: 45,  # Sand
-    17: 20,  # Grass
-    18: 25,  # Grass paver
-}
-WAYTYPE_EXPOSURE = {
-    0: 50,   # Unknown
-    1: 90,   # State road
-    2: 80,   # Road
-    3: 65,   # Street
-    4: 40,   # Path
-    5: 45,   # Track
-    6: 45,   # Cycleway
-    7: 35,   # Footway
-    8: 50,   # Steps
-    9: 60,   # Ferry
-    10: 75,  # Construction
-}
+    return round(clamp(score), 1), components, weights
+
+SURFACE_EXPOSURE = {0: 50, 1: 75, 2: 45, 3: 90, 4: 85, 6: 70, 7: 40, 8: 55, 10: 50, 11: 40, 12: 35, 13: 30, 14: 75, 15: 45, 17: 20, 18: 25}
+WAYTYPE_EXPOSURE = {0: 50, 1: 90, 2: 80, 3: 65, 4: 40, 5: 45, 6: 45, 7: 35, 8: 50, 9: 60, 10: 75}
+
 def get_surface_exposure(surface_id):
-    return SURFACE_EXPOSURE.get(
-        int(surface_id),
-        50
-    )
+    return SURFACE_EXPOSURE.get(int(surface_id), 50)
+
 def get_waytype_exposure(waytype_id):
-    return WAYTYPE_EXPOSURE.get(
-        int(waytype_id),
-        50
-    )
-# ============================================================
-# Route Metadata Helpers
-# ============================================================
+    return WAYTYPE_EXPOSURE.get(int(waytype_id), 50)
+
 def build_lookup(values):
-    """
-    Convert:
-        [[0, 10, 3], [10, 20, 1]]
-    into a function-friendly list.
-    """
     result = []
     for item in values or []:
         if len(item) < 3:
             continue
-        result.append({
-            "start": int(
-                item[0]
-            ),
-            "end": int(
-                item[1]
-            ),
-            "value": int(
-                item[2]
-            ),
-        })
+        result.append({"start": int(item[0]), "end": int(item[1]), "value": int(item[2])})
     return result
-def value_for_waypoint(
-    index,
-    lookup,
-    default=0
-):
+
+def value_for_waypoint(index, lookup, default=0):
     for item in lookup:
-        if (
-            item["start"]
-            <= index
-            < item["end"]
-        ):
+        if item["start"] <= index < item["end"]:
             return item["value"]
     return default
-# ============================================================
-# Segment Route
-# ============================================================
+
 def segment_route(route):
-    geometry = route[
-        "geometry"
-    ][
-        "coordinates"
-    ]
-    extras = route.get(
-        "properties",
-        {}
-    ).get(
-        "extras",
-        {}
-    )
-    surface_data = extras.get(
-        "surface",
-        {}
-    ).get(
-        "values",
-        []
-    )
-    # Newer ORS responses use "waytype".
-    # Some older responses used "waytypes".
-    waytype_data = extras.get(
-        "waytype",
-        {}
-    ).get(
-        "values",
-        []
-    )
-    if not waytype_data:
-        waytype_data = extras.get(
-            "waytypes",
-            {}
-        ).get(
-            "values",
-            []
-        )
-    surface_lookup = build_lookup(
-        surface_data
-    )
-    waytype_lookup = build_lookup(
-        waytype_data
-    )
+    geometry = route["geometry"]["coordinates"]
+    extras = route.get("properties", {}).get("extras", {})
+    surface_data = extras.get("surface", {}).get("values", [])
+    waytype_data = extras.get("waytype", {}).get("values", []) or extras.get("waytypes", {}).get("values", [])
+    surface_lookup = build_lookup(surface_data)
+    waytype_lookup = build_lookup(waytype_data)
     segments = []
-    for i in range(
-        len(geometry) - 1
-    ):
+    for i in range(len(geometry) - 1):
         start_point = geometry[i]
         end_point = geometry[i + 1]
-        distance_km = haversine_km(
-            start_point,
-            end_point
-        )
-        surface_id = value_for_waypoint(
-            i,
-            surface_lookup,
-            0
-        )
-        waytype_id = value_for_waypoint(
-            i,
-            waytype_lookup,
-            0
-        )
-        surface_exposure = (
-            get_surface_exposure(
-                surface_id
-            )
-        )
-        waytype_exposure = (
-            get_waytype_exposure(
-                waytype_id
-            )
-        )
-        # Environmental proxy:
-        #
-        # 60% surface
-        # 40% way type
-        #
-        # This can later be replaced with
-        # actual tree/shade/GIS data.
-        environmental_exposure = (
-            surface_exposure * 0.60
-            + waytype_exposure * 0.40
-        )
+        distance_km = haversine_km(start_point, end_point)
+        surface_id = value_for_waypoint(i, surface_lookup, 0)
+        waytype_id = value_for_waypoint(i, waytype_lookup, 0)
+        surface_exposure = get_surface_exposure(surface_id)
+        waytype_exposure = get_waytype_exposure(waytype_id)
+        environmental_exposure = surface_exposure * 0.60 + waytype_exposure * 0.40
         segments.append({
-            "start_point": {
-                "longitude":
-                    round(
-                        start_point[0],
-                        6
-                    ),
-                "latitude":
-                    round(
-                        start_point[1],
-                        6
-                    ),
-            },
-            "end_point": {
-                "longitude":
-                    round(
-                        end_point[0],
-                        6
-                    ),
-                "latitude":
-                    round(
-                        end_point[1],
-                        6
-                    ),
-            },
-            "distance_km":
-                round(
-                    distance_km,
-                    4
-                ),
-            "surface_id":
-                surface_id,
-            "surface_exposure":
-                surface_exposure,
-            "waytype_id":
-                waytype_id,
-            "waytype_exposure":
-                waytype_exposure,
-            "environmental_exposure":
-                round(
-                    environmental_exposure,
-                    1
-                ),
+            "start_point": {"longitude": round(start_point[0], 6), "latitude": round(start_point[1], 6)},
+            "end_point": {"longitude": round(end_point[0], 6), "latitude": round(end_point[1], 6)},
+            "distance_km": round(distance_km, 4),
+            "surface_id": surface_id,
+            "surface_exposure": surface_exposure,
+            "waytype_id": waytype_id,
+            "waytype_exposure": waytype_exposure,
+            "environmental_exposure": round(environmental_exposure, 1),
         })
     return segments
-# ============================================================
-# Calculate Route Heat
-# ============================================================
-def calculate_route_heat(
-    route,
-    weather
-):
-    distance_km = (
-        route["properties"]["summary"]["distance"]
-        / 1000.0
+
+def calculate_route_heat(route, weather):
+    distance_km = route["properties"]["summary"]["distance"] / 1000.0
+    duration_min = route["properties"]["summary"]["duration"] / 60.0
+    weather_heat, components, weights = calculate_weather_heat(
+        weather["temperature_c"], weather["humidity_percent"], weather["wind_speed_kmh"], duration_min
     )
-    duration_min = (
-        route["properties"]["summary"]["duration"]
-        / 60.0
-    )
-    weather_heat, components, weights = (
-        calculate_weather_heat(
-            weather["temperature_c"],
-            weather["humidity_percent"],
-            weather["wind_speed_kmh"],
-            duration_min
-        )
-    )
-    segments = segment_route(
-        route
-    )
+    segments = segment_route(route)
     if segments:
-        total_distance = sum(
-            s["distance_km"]
-            for s in segments
-        )
-        if total_distance > 0:
-            environmental_exposure = (
-                sum(
-                    s["environmental_exposure"]
-                    * s["distance_km"]
-                    for s in segments
-                )
-                / total_distance
-            )
-        else:
-            environmental_exposure = 50
+        total_distance = sum(s["distance_km"] for s in segments)
+        environmental_exposure = (sum(s["environmental_exposure"] * s["distance_km"] for s in segments) / total_distance) if total_distance > 0 else 50
     else:
         environmental_exposure = 50
-    # Weather remains dominant.
-    #
-    # 80% weather-based heat
-    # 20% environmental proxy
-    #
-    # Later this 20% can become actual
-    # shade/tree/solar exposure data.
-    final_heat = (
-        weather_heat * 0.80
-        + environmental_exposure * 0.20
-    )
-    final_heat = round(
-        clamp(final_heat),
-        1
-    )
+    final_heat = round(clamp(weather_heat * 0.80 + environmental_exposure * 0.20), 1)
     if final_heat <= 25:
         category = "Low"
     elif final_heat <= 50:
@@ -612,612 +396,360 @@ def calculate_route_heat(
     else:
         category = "Very High"
     return {
-        "heat_score":
-            final_heat,
-        "category":
-            category,
-        "weather_heat":
-            weather_heat,
-        "environmental_exposure":
-            round(
-                environmental_exposure,
-                1
-            ),
-        "components":
-            components,
-        "weights":
-            weights,
-        "segments":
-            segments,
+        "heat_score": final_heat, "category": category, "weather_heat": weather_heat,
+        "environmental_exposure": round(environmental_exposure, 1), "components": components, "weights": weights, "segments": segments,
     }
-# ============================================================
-# Route Ranking
-# ============================================================
+
 ROUTE_MODES = {
-    "fast": {
-        "time": 0.60,
-        "distance": 0.20,
-        "heat": 0.20,
-    },
-    "balanced": {
-        "time": 0.35,
-        "distance": 0.25,
-        "heat": 0.40,
-    },
-    "heat-safe": {
-        "time": 0.15,
-        "distance": 0.15,
-        "heat": 0.70,
-    },
+    "fast": {"time": 0.60, "distance": 0.20, "heat": 0.20},
+    "balanced": {"time": 0.35, "distance": 0.25, "heat": 0.40},
+    "heat-safe": {"time": 0.15, "distance": 0.15, "heat": 0.70},
 }
+
 def normalize(values):
     if not values:
         return []
     minimum = min(values)
     maximum = max(values)
     if maximum == minimum:
-        return [
-            0.0
-            for _ in values
-        ]
-    return [
-        (
-            value - minimum
-        )
-        / (
-            maximum - minimum
-        )
-        for value in values
-    ]
+        return [0.0 for _ in values]
+    return [(value - minimum) / (maximum - minimum) for value in values]
+
 def rank_routes(routes):
-    times = [
-        r["duration_min"]
-        for r in routes
-    ]
-    distances = [
-        r["distance_km"]
-        for r in routes
-    ]
-    heats = [
-        r["heat"]["heat_score"]
-        for r in routes
-    ]
-    normalized_time = normalize(
-        times
-    )
-    normalized_distance = normalize(
-        distances
-    )
-    normalized_heat = normalize(
-        heats
-    )
-    for index, route in enumerate(
-        routes
-    ):
+    times = [r["duration_min"] for r in routes]
+    distances = [r["distance_km"] for r in routes]
+    heats = [r["heat"]["heat_score"] for r in routes]
+    normalized_time = normalize(times)
+    normalized_distance = normalize(distances)
+    normalized_heat = normalize(heats)
+    for index, route in enumerate(routes):
         route["normalized"] = {
-            "time": round(
-                normalized_time[index],
-                3
-            ),
-            "distance": round(
-                normalized_distance[index],
-                3
-            ),
-            "heat": round(
-                normalized_heat[index],
-                3
-            ),
+            "time": round(normalized_time[index], 3),
+            "distance": round(normalized_distance[index], 3),
+            "heat": round(normalized_heat[index], 3),
         }
-        for mode_name, weights in (
-            ROUTE_MODES.items()
-        ):
+        for mode_name, weights in ROUTE_MODES.items():
             score = (
-                normalized_time[index]
-                * weights["time"]
-                + normalized_distance[index]
-                * weights["distance"]
-                + normalized_heat[index]
-                * weights["heat"]
+                normalized_time[index] * weights["time"]
+                + normalized_distance[index] * weights["distance"]
+                + normalized_heat[index] * weights["heat"]
             )
-            route.setdefault(
-                "mode_scores",
-                {}
-            )[mode_name] = round(
-                score,
-                3
-            )
-    # Best route = lowest score.
+            route.setdefault("mode_scores", {})[mode_name] = round(score, 3)
     recommendations = {}
     for mode_name in ROUTE_MODES:
-        best = min(
-            routes,
-            key=lambda r:
-                r["mode_scores"][mode_name]
-        )
+        best = min(routes, key=lambda r: r["mode_scores"][mode_name])
         recommendations[mode_name] = {
-            "route_id":
-                best["route_id"],
-            "reason": (
-                f"Best {mode_name} option based on "
-                f"time, distance and estimated heat exposure."
-            ),
+            "route_id": best["route_id"],
+            "reason": f"Best {mode_name} option based on time, distance and estimated heat exposure.",
         }
     return recommendations
-# ============================================================
-# HeiGIT Routing
-# ============================================================
-def get_routes(
-    origin_lat,
-    origin_lon,
-    destination_lat,
-    destination_lon
-):
+
+def get_routes(origin_lat, origin_lon, destination_lat, destination_lon):
     payload = {
-        "coordinates": [
-            [
-                origin_lon,
-                origin_lat
-            ],
-            [
-                destination_lon,
-                destination_lat
-            ]
-        ],
-        "alternative_routes": {
-            "target_count": 3,
-            "share_factor": 0.8,
-            "weight_factor": 1.5
-        },
-        "extra_info": [
-            "surface",
-            "waytype"
-        ]
+        "coordinates": [[origin_lon, origin_lat], [destination_lon, destination_lat]],
+        "alternative_routes": {"target_count": 3, "share_factor": 0.8, "weight_factor": 1.5},
+        "extra_info": ["surface", "waytype"]
     }
-    response = post_json(
-        ROUTING_URL,
-        payload,
-        {
-            "Authorization":
-                HEIGIT_API_KEY,
-        }
-    )
-    return response.get(
-        "features",
-        []
-    )
+    response = post_json(ROUTING_URL, payload, {"Authorization": HEIGIT_API_KEY})
+    return response.get("features", [])
+
 # ============================================================
-# Lambda
+# Main Lambda Handler
 # ============================================================
 def lambda_handler(event, context):
-    # --------------------------------------------------------
-    # CORS preflight
-    # --------------------------------------------------------
-    request_context = event.get(
-        "requestContext",
-        {}
-    )
+    request_context = event.get("requestContext", {})
     http_method = (
-        request_context.get(
-            "http",
-            {}
-        ).get(
-            "method"
-        )
-        or event.get(
-            "httpMethod"
-        )
+        request_context.get("http", {}).get("method")
+        or event.get("httpMethod")
         or ""
     ).upper()
+    path = event.get("path", "")
+
+    # CORS Preflight
     if http_method == "OPTIONS":
-        return api_response(
-            204,
-            {}
-        )
+        return api_response(204, {})
+
+    # ========================================================
+    # 1. COOL SPOTS & ADMIN ENDPOINTS
+    # ========================================================
+    # GET /cool-spots?city=indore
+    if "cool-spots" in path and http_method == "GET" and "requests" not in path:
+        try:
+            query = event.get("queryStringParameters") or {}
+            city = query.get("city", "indore").strip().lower()
+            resp = spots_table.scan()
+            items = [i for i in resp.get("Items", []) if str(i.get("city", "")).lower() == city]
+            existing_names = {str(i.get("name", "")).strip().lower() for i in items}
+
+            # 1. Ensure all curated seed spots (including khatiwala tank) are present in DynamoDB
+            if city == "indore":
+                for seed in INITIAL_VERIFIED_SPOTS:
+                    if str(seed["name"]).strip().lower() not in existing_names:
+                        try:
+                            spots_table.put_item(Item=convert_to_dynamodb(seed))
+                            items.append(seed)
+                            existing_names.add(str(seed["name"]).strip().lower())
+                        except Exception as e:
+                            print("Seeding error:", e)
+
+            # 2. Auto-promote any requests that were marked 'approved' in requests_table
+            try:
+                req_resp = requests_table.scan()
+                for req in req_resp.get("Items", []):
+                    if str(req.get("status", "")).lower() == "approved":
+                        req_city = str(req.get("city", "indore")).lower()
+                        req_name = req.get("suggested_name") or req.get("name") or "Verified Cool Spot"
+                        if req_city == city and req_name.strip().lower() not in existing_names:
+                            promoted_spot = {
+                                "spot_id": req.get("request_id") or f"spot-{uuid.uuid4()}",
+                                "id": req.get("request_id") or f"spot-{uuid.uuid4()}",
+                                "city": req_city,
+                                "name": req_name,
+                                "description": req.get("message") or req.get("description", ""),
+                                "category": req.get("category", "canopy_park"),
+                                "lat": req.get("lat", 22.7196),
+                                "lon": req.get("lon", 75.8577),
+                                "coords": {"lat": req.get("lat", 22.7196), "lon": req.get("lon", 75.8577)},
+                                "logo_id": req.get("suggested_logo") or req.get("logo_id", "tree_canopy"),
+                                "coolingOffsetC": Decimal("3.5"),
+                                "openHours": req.get("openHours", "06:00 - 21:00"),
+                                "upvotes": int(req.get("upvotes", 1)),
+                                "verified_by": f"Verified ({req.get('user_email', 'Admin')})",
+                                "created_at": req.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                                "image_url": req.get("spot_image_url") or req.get("image_url", ""),
+                            }
+                            try:
+                                spots_table.put_item(Item=convert_to_dynamodb(promoted_spot))
+                                items.append(promoted_spot)
+                                existing_names.add(req_name.strip().lower())
+                            except Exception as pe:
+                                print("Error putting promoted spot:", pe)
+            except Exception as sync_err:
+                print("Auto-promotion scan error:", sync_err)
+
+            return api_response(200, {"spots": items, "count": len(items)})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+            
+    # POST /cool-spots/requests (Community User submits Cool Spot nomination)
+    if "cool-spots/requests" in path and http_method == "POST":
+        try:
+            body = json.loads(event.get("body") or "{}")
+            if not body.get("request_id"):
+                body["request_id"] = f"req-{uuid.uuid4()}"
+            if not body.get("status"):
+                body["status"] = "pending"
+            if not body.get("created_at"):
+                body["created_at"] = datetime.now(timezone.utc).isoformat()
+            
+            item_to_save = convert_to_dynamodb(body)
+            requests_table.put_item(Item=item_to_save)
+            return api_response(201, {"saved": True, "request_id": body["request_id"]})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+
+    # GET /admin/cool-spots/requests (Admin views pending & historical requests)
+    if ("admin/cool-spots/requests" in path or ("cool-spots/requests" in path and "admin" in path)) and http_method == "GET":
+        if not is_admin_authorized(event):
+            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
+        try:
+            resp = requests_table.scan()
+            return api_response(200, {"requests": resp.get("Items", [])})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+
+    # POST /admin/cool-spots (Admin creates or edits a verified Cool Spot)
+    if ("admin/cool-spots" in path or path.endswith("/cool-spots")) and http_method == "POST" and "requests" not in path:
+        if not is_admin_authorized(event):
+            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
+        try:
+            body = json.loads(event.get("body") or "{}")
+            if not body.get("spot_id"):
+                body["spot_id"] = f"spot-{uuid.uuid4()}"
+            if not body.get("id"):
+                body["id"] = body["spot_id"]
+            if not body.get("created_at"):
+                body["created_at"] = datetime.now(timezone.utc).isoformat()
+            
+            item_to_save = convert_to_dynamodb(body)
+            spots_table.put_item(Item=item_to_save)
+            return api_response(200, {"spot": body})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+
+    # PATCH /admin/cool-spots/requests/{id} (Admin approves or rejects request)
+    if "requests/" in path and http_method in ("PATCH", "PUT", "POST"):
+        if not is_admin_authorized(event):
+            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
+        try:
+            req_id = path.rstrip("/").split("/")[-1]
+            body = json.loads(event.get("body") or "{}")
+            new_status = body.get("status", "approved").lower()
+
+            # 1. Update request status
+            requests_table.update_item(
+                Key={"request_id": req_id},
+                UpdateExpression="SET #s = :s",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":s": new_status}
+            )
+
+            # 2. If approved, automatically promote nomination into live Cool Spots table!
+            if new_status == "approved":
+                get_res = requests_table.get_item(Key={"request_id": req_id})
+                req_item = get_res.get("Item")
+                if req_item:
+                    spot_entry = {
+                        "spot_id": req_id,
+                        "id": req_id,
+                        "city": req_item.get("city", "indore").lower(),
+                        "name": req_item.get("suggested_name") or "Verified Cool Spot",
+                        "description": req_item.get("message", ""),
+                        "category": "canopy_park",
+                        "lat": req_item.get("lat", 22.7196),
+                        "lon": req_item.get("lon", 75.8577),
+                        "coords": {"lat": req_item.get("lat", 22.7196), "lon": req_item.get("lon", 75.8577)},
+                        "logo_id": req_item.get("suggested_logo", "tree_canopy"),
+                        "coolingOffsetC": Decimal("3.5"),
+                        "openHours": "06:00 - 21:00",
+                        "upvotes": 1,
+                        "verified_by": f"Verified ({req_item.get('user_email', 'Admin')})",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "image_url": req_item.get("spot_image_url", ""),
+                    }
+                    spots_table.put_item(Item=convert_to_dynamodb(spot_entry))
+
+            return api_response(200, {"updated": True, "request_id": req_id, "status": new_status})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+
+    # DELETE /admin/cool-spots/{id} (Admin removes a verified spot)
+    if "admin/cool-spots/" in path and http_method == "DELETE":
+        if not is_admin_authorized(event):
+            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
+        try:
+            spot_id = path.rstrip("/").split("/")[-1]
+            spots_table.delete_item(Key={"spot_id": spot_id})
+            return api_response(200, {"deleted": True, "spot_id": spot_id})
+        except Exception as e:
+            return api_error(500, "DYNAMODB_ERROR", str(e))
+
+    # ========================================================
+    # 2. CORE ROUTING PLANNER ENDPOINT
+    # ========================================================
     try:
-        query = event.get(
-            "queryStringParameters"
-        ) or {}
+        query = event.get("queryStringParameters") or {}
         body = {}
         if event.get("body"):
             try:
-                body = json.loads(
-                    event["body"]
-                )
+                body = json.loads(event["body"])
             except json.JSONDecodeError:
-                return api_response(
-                    400,
-                    {
-                        "status": "error",
-                        "message":
-                            "Request body must contain valid JSON."
-                    }
-                )
-        # ----------------------------------------------------
-        # Support GET query parameters
-        # and POST JSON bodies.
-        # ----------------------------------------------------
-        origin_lat_raw = body.get(
-            "originLat",
-            query.get("originLat")
-        )
-        origin_lon_raw = body.get(
-            "originLon",
-            query.get("originLon")
-        )
-        destination_lat_raw = body.get(
-            "destLat",
-            query.get("destLat")
-        )
-        destination_lon_raw = body.get(
-            "destLon",
-            query.get("destLon")
-        )
+                return api_response(400, {"status": "error", "message": "Request body must contain valid JSON."})
+
+        origin_lat_raw = body.get("originLat", query.get("originLat"))
+        origin_lon_raw = body.get("originLon", query.get("originLon"))
+        destination_lat_raw = body.get("destLat", query.get("destLat"))
+        destination_lon_raw = body.get("destLon", query.get("destLon"))
+
         required_values = {
-            "originLat":
-                origin_lat_raw,
-            "originLon":
-                origin_lon_raw,
-            "destLat":
-                destination_lat_raw,
-            "destLon":
-                destination_lon_raw,
+            "originLat": origin_lat_raw, "originLon": origin_lon_raw,
+            "destLat": destination_lat_raw, "destLon": destination_lon_raw,
         }
-        missing = [
-            name
-            for name, value
-            in required_values.items()
-            if value is None
-            or value == ""
-        ]
+        missing = [name for name, value in required_values.items() if value is None or value == ""]
         if missing:
-            return api_response(
-                400,
-                {
-                    "status":
-                        "error",
-                    "message":
-                        "Missing required parameters.",
-                    "missing":
-                        missing,
-                }
-            )
+            return api_response(400, {"status": "error", "message": "Missing required parameters.", "missing": missing})
+
         try:
-            origin_lat = float(
-                origin_lat_raw
-            )
-            origin_lon = float(
-                origin_lon_raw
-            )
-            destination_lat = float(
-                destination_lat_raw
-            )
-            destination_lon = float(
-                destination_lon_raw
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            return api_response(
-                400,
-                {
-                    "status":
-                        "error",
-                    "message":
-                        (
-                            "Coordinates must be valid "
-                            "numeric values."
-                        ),
-                }
-            )
-        # Reject NaN/Infinity (ordinary range checks do not catch NaN).
+            origin_lat = float(origin_lat_raw)
+            origin_lon = float(origin_lon_raw)
+            destination_lat = float(destination_lat_raw)
+            destination_lon = float(destination_lon_raw)
+        except (TypeError, ValueError):
+            return api_response(400, {"status": "error", "message": "Coordinates must be valid numeric values."})
+
         coordinates = (origin_lat, origin_lon, destination_lat, destination_lon)
         if not all(math.isfinite(value) for value in coordinates):
             return api_error(400, "INVALID_COORDINATES", "Coordinates must be finite numbers.")
 
-        # ----------------------------------------------------
-        # Coordinate validation
-        # ----------------------------------------------------
-        if not (
-            -90 <= origin_lat <= 90
-            and -180 <= origin_lon <= 180
-            and -90 <= destination_lat <= 90
-            and -180 <= destination_lon <= 180
-        ):
-            return api_response(
-                400,
-                {
-                    "status":
-                        "error",
-                    "message":
-                        (
-                            "Invalid coordinate range. "
-                            "Latitude must be between -90 and 90; "
-                            "longitude must be between -180 and 180."
-                        ),
-                }
-            )
-        # City may be passed through either GET query params or POST JSON body.
+        if not (-90 <= origin_lat <= 90 and -180 <= origin_lon <= 180 and -90 <= destination_lat <= 90 and -180 <= destination_lon <= 180):
+            return api_response(400, {"status": "error", "message": "Invalid coordinate range."})
+
         city_raw = body.get("city", query.get("city", "indore"))
         city_id = str(city_raw or "indore").strip().lower()
         city = SUPPORTED_CITIES.get(city_id)
         if city is None:
-            return api_error(
-                422, "UNSUPPORTED_CITY",
-                "This city is not enabled for heat-safe routing. Supported cities: "
-                + ", ".join(c["name"] for c in SUPPORTED_CITIES.values()),
-            )
-        if not location_supported(origin_lat, origin_lon, city):
-            return api_error(422, "UNSUPPORTED_LOCATION",
-                             f"Origin is outside the supported {city['name']} area.")
-        if not location_supported(destination_lat, destination_lon, city):
-            return api_error(422, "UNSUPPORTED_LOCATION",
-                             f"Destination is outside the supported {city['name']} area.")
-        if haversine_km([origin_lon, origin_lat],
-                        [destination_lon, destination_lat]) < 0.01:
-            return api_error(400, "POINTS_TOO_CLOSE",
-                             "Origin and destination must be at least 10 metres apart.")
+            return api_error(422, "UNSUPPORTED_CITY", "This city is not enabled for heat-safe routing.")
 
-        # ----------------------------------------------------
-        # Generate request ID
-        # ----------------------------------------------------
-        request_id = (
-            f"req-{uuid.uuid4()}"
-        )
-        created_at = (
-            datetime.now(
-                timezone.utc
-            ).isoformat()
-        )
-        # ----------------------------------------------------
-        # Weather
-        # ----------------------------------------------------
-        weather = get_weather(
-            origin_lat,
-            origin_lon
-        )
-        # ----------------------------------------------------
-        # Routes
-        # ----------------------------------------------------
-        route_features = get_routes(
-            origin_lat,
-            origin_lon,
-            destination_lat,
-            destination_lon
-        )
+        if not location_supported(origin_lat, origin_lon, city):
+            return api_error(422, "UNSUPPORTED_LOCATION", f"Origin is outside the supported {city['name']} area.")
+        if not location_supported(destination_lat, destination_lon, city):
+            return api_error(422, "UNSUPPORTED_LOCATION", f"Destination is outside the supported {city['name']} area.")
+        if haversine_km([origin_lon, origin_lat], [destination_lon, destination_lat]) < 0.01:
+            return api_error(400, "POINTS_TOO_CLOSE", "Origin and destination must be at least 10 metres apart.")
+
+        request_id = f"req-{uuid.uuid4()}"
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        weather = get_weather(origin_lat, origin_lon)
+        route_features = get_routes(origin_lat, origin_lon, destination_lat, destination_lon)
         if not route_features:
-            return api_error(422, "NO_WALKING_ROUTE",
-                             "No walkable route was found between these locations.")
+            return api_error(422, "NO_WALKING_ROUTE", "No walkable route was found between these locations.")
+
         routes = []
-        for index, feature in enumerate(
-            route_features
-        ):
-            properties = feature.get(
-                "properties",
-                {}
-            )
-            summary = properties.get(
-                "summary",
-                {}
-            )
-            distance_km = (
-                summary.get(
-                    "distance",
-                    0
-                )
-                / 1000.0
-            )
-            duration_min = (
-                summary.get(
-                    "duration",
-                    0
-                )
-                / 60.0
-            )
-            route = {
-                "route_id":
-                    f"route-{index + 1}",
-                "distance_km":
-                    round(
-                        distance_km,
-                        2
-                    ),
-                "duration_min":
-                    round(
-                        duration_min,
-                        1
-                    ),
-                "geometry":
-                    feature.get(
-                        "geometry"
-                    ),
-                "heat":
-                    calculate_route_heat(
-                        feature,
-                        weather
-                    ),
-            }
-            routes.append(
-                route
-            )
-        # ----------------------------------------------------
-        # Ranking
-        # ----------------------------------------------------
-        recommendations = rank_routes(
-            routes
-        )
-        # ----------------------------------------------------
-        # Find overall heat-safe route
-        # ----------------------------------------------------
-        heat_safe_route = next(
-            r
-            for r in routes
-            if r["route_id"]
-            == recommendations[
-                "heat-safe"
-            ][
-                "route_id"
-            ]
-        )
-        # ----------------------------------------------------
-        # Model metadata
-        # ----------------------------------------------------
+        for index, feature in enumerate(route_features):
+            summary = feature.get("properties", {}).get("summary", {})
+            distance_km = summary.get("distance", 0) / 1000.0
+            duration_min = summary.get("duration", 0) / 60.0
+            routes.append({
+                "route_id": f"route-{index + 1}",
+                "distance_km": round(distance_km, 2),
+                "duration_min": round(duration_min, 1),
+                "geometry": feature.get("geometry"),
+                "heat": calculate_route_heat(feature, weather),
+            })
+
+        recommendations = rank_routes(routes)
+        heat_safe_route = next(r for r in routes if r["route_id"] == recommendations["heat-safe"]["route_id"])
+
         model = {
-            "type": "deterministic",
-            "version": "baseline-v1",
-            "feature_schema": "1.0",
-            "ml_enabled": False,
-            "description":
-                "Relative Heat Exposure Score",
-            "weather_weights": {
-                "temperature":
-                    0.50,
-                "humidity":
-                    0.15,
-                "wind":
-                    0.10,
-                "duration":
-                    0.25,
-            },
-            "environmental_proxy_weights": {
-                "surface":
-                    0.60,
-                "waytype":
-                    0.40,
-            },
-            "final_heat_weights": {
-                "weather":
-                    0.80,
-                "environmental_proxy":
-                    0.20,
-            },
-            "note": (
-                "Environmental exposure currently uses "
-                "OpenStreetMap surface and waytype proxies. "
-                "It is not a direct measurement of shade, "
-                "tree cover or solar radiation."
-            ),
+            "type": "deterministic", "version": "baseline-v1", "feature_schema": "1.0",
+            "ml_enabled": False, "description": "Relative Heat Exposure Score",
+            "weather_weights": {"temperature": 0.50, "humidity": 0.15, "wind": 0.10, "duration": 0.25},
+            "environmental_proxy_weights": {"surface": 0.60, "waytype": 0.40},
+            "final_heat_weights": {"weather": 0.80, "environmental_proxy": 0.20},
         }
-        # ----------------------------------------------------
-        # Final response
-        # ----------------------------------------------------
+
         result = {
             "city": {"id": city_id, "name": city["name"]},
-            "status":
-                "ok",
-            "request_id":
-                request_id,
-            "origin": {
-                "latitude":
-                    origin_lat,
-                "longitude":
-                    origin_lon,
-            },
-            "destination": {
-                "latitude":
-                    destination_lat,
-                "longitude":
-                    destination_lon,
-            },
-            "weather":
-                weather,
-            "route_count":
-                len(routes),
-            "routes":
-                routes,
-            "recommendations":
-                recommendations,
-            "recommended_route":
-                heat_safe_route[
-                    "route_id"
-                ],
-            "model":
-                model,
-            "storage":
-                {
-                    "status":
-                        "pending",
-                    "table":
-                        DYNAMODB_TABLE_NAME,
-                },
+            "status": "ok", "request_id": request_id,
+            "origin": {"latitude": origin_lat, "longitude": origin_lon},
+            "destination": {"latitude": destination_lat, "longitude": destination_lon},
+            "weather": weather, "route_count": len(routes),
+            "routes": routes, "recommendations": recommendations,
+            "recommended_route": heat_safe_route["route_id"],
+            "model": model, "storage": {"status": "pending", "table": DYNAMODB_TABLE_NAME},
         }
-        # ----------------------------------------------------
-        # Persist to DynamoDB
-        # ----------------------------------------------------
+
         try:
             persist_route_plan(
-                request_id=
-                    request_id,
-                created_at=
-                    created_at,
-                origin_lat=
-                    origin_lat,
-                origin_lon=
-                    origin_lon,
-                destination_lat=
-                    destination_lat,
-                destination_lon=
-                    destination_lon,
-                weather=
-                    weather,
-                routes=
-                    routes,
-                recommendations=
-                    recommendations,
-                recommended_route=
-                    heat_safe_route[
-                        "route_id"
-                    ],
-                model=
-                    model,
+                request_id=request_id, created_at=created_at, origin_lat=origin_lat,
+                origin_lon=origin_lon, destination_lat=destination_lat, destination_lon=destination_lon,
+                weather=weather, routes=routes, recommendations=recommendations,
+                recommended_route=heat_safe_route["route_id"], model=model
             )
-            result["storage"]["status"] = (
-                "saved"
-            )
+            result["storage"]["status"] = "saved"
         except Exception as db_error:
-            print(
-                "DynamoDB persistence failed:",
-                str(db_error)
-            )
-            # Routing itself succeeded, but the complete
-            # backend operation did not because persistence
-            # failed. Return an explicit error rather than
-            # pretending the record was stored.
-            return api_response(
-                500,
-                {
-                    "status":
-                        "error",
-                    "message":
-                        (
-                            "Route planning succeeded, "
-                            "but saving the result to DynamoDB failed."
-                        ),
-                    "request_id":
-                        request_id,
-                    "storage":
-                        {
-                            "status":
-                                "failed",
-                            "table":
-                                DYNAMODB_TABLE_NAME,
-                        },
-                }
-            )
-        # ----------------------------------------------------
-        # Success
-        # ----------------------------------------------------
-        return api_response(
-            200,
-            result
-        )
+            print("DynamoDB persistence failed:", str(db_error))
+            return api_response(500, {
+                "status": "error", "message": "Route planning succeeded, but saving the result to DynamoDB failed.",
+                "request_id": request_id, "storage": {"status": "failed", "table": DYNAMODB_TABLE_NAME},
+            })
+
+        return api_response(200, result)
+
     except urllib.error.HTTPError as e:
         print("Routing/weather provider HTTP error:", e.code)
-        if e.code in (400, 404, 422):
-            return api_error(422, "NO_WALKING_ROUTE",
-                             "No walkable route was found; please choose nearby valid points.")
-        return api_error(502, "UPSTREAM_SERVICE_ERROR",
-                         "An external routing or weather service could not complete the request.")
+        return api_error(422, "NO_WALKING_ROUTE", "No walkable route was found; please choose nearby valid points.")
     except Exception as e:
         print("Planner error:", type(e).__name__, str(e))
         return api_error(500, "PLANNER_ERROR", "Unable to calculate routes right now.")

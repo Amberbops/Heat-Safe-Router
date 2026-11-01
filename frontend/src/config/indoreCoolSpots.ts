@@ -3,6 +3,23 @@ import type { Coordinates, RouteAlternative } from '../types/route';
 
 export const INITIAL_INDORE_COOL_SPOTS: CoolSpot[] = [
   {
+    id: 'spot_indore_vallabh_garden',
+    spot_id: 'spot_indore_vallabh_garden',
+    city: 'indore',
+    name: 'vallabh garden khatiwala tank',
+    category: 'canopy_park',
+    lat: 22.6973,
+    lon: 75.8626,
+    coords: { lat: 22.6973, lon: 75.8626 },
+    coolingOffsetC: -3.5,
+    description: 'pyau and extensive shade throughout the path nearby',
+    openHours: '06:00 AM – 09:00 PM',
+    upvotes: 38,
+    logo_id: 'tree_canopy',
+    verified_by: 'HeatSafe Team',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
     id: 'cs-rajwada-pyau',
     spot_id: 'cs-rajwada-pyau',
     city: 'indore',

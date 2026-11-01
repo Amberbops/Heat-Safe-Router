@@ -35,7 +35,9 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+frontend/.env
 frontend/.env.local
+frontend/.env.*
 backend/.env
 secret.txt
 

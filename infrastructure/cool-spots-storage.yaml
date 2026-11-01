@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'HeatSafe Route Planner - AWS Storage & Cool Spots Management'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Deployment stage environment (dev/prod)
+  MediaBucketName:
+    Type: String
+    Default: heatsafe-coolspots-media
+    Description: S3 bucket name for cool spot images
+
+Resources:
+  # ============================================================
+  # 1. DynamoDB: HeatSafe_CoolSpots
+  # ============================================================
+  CoolSpotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: HeatSafe_CoolSpots
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: city
+          AttributeType: S
+        - AttributeName: spot_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: city
+          KeyType: HASH
+        - AttributeName: spot_id
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: HeatSafe
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================
+  # 2. DynamoDB: HeatSafe_SpotRequests
+  # ============================================================
+  SpotRequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: HeatSafe_SpotRequests
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: request_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: request_id
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: HeatSafe
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================
+  # 3. Amazon S3: Media Bucket for Photos
+  # ============================================================
+  CoolSpotsMediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref MediaBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+
+  # ============================================================
+  # 4. IAM Role for Cool Spots Lambda
+  # ============================================================
+  CoolSpotsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'heatsafe-coolspots-lambda-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: HeatSafeStorageAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt CoolSpotsTable.Arn
+                  - !GetAtt SpotRequestsTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${MediaBucketName}/*'
+
+Outputs:
+  CoolSpotsTableName:
+    Description: DynamoDB Table for verified cool spots
+    Value: !Ref CoolSpotsTable
+  SpotRequestsTableName:
+    Description: DynamoDB Table for community nominations
+    Value: !Ref SpotRequestsTable
+  MediaBucketArn:
+    Description: S3 Bucket ARN for photos
+    Value: !GetAtt CoolSpotsMediaBucket.Arn

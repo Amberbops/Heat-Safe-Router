@@ -6,10 +6,8 @@ import type {
 } from '../types/route';
 import type { CoolSpot, CoolSpotRequest, UserRole, AuthSession } from '../types/coolSpot';
 
-const DEFAULT_API_BASE_URL = 'https://zlxk92fdb6.execute-api.us-east-1.amazonaws.com/dev';
-
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
+  import.meta.env.VITE_API_BASE_URL || ''
 ).replace(/\/+$/, '');
 
 const SPOTS_STORAGE_KEY = 'heatsafe_aws_coolspots_v1';
@@ -30,14 +28,49 @@ function notifySync(type: string, data?: unknown) {
   }
 }
 
-// Default initial verified Cool Spots for Indore (Local Fallback)
+// Default initial verified Cool Spots for Indore (Local Fallback & Seeding)
 const DEFAULT_COOL_SPOTS: CoolSpot[] = [
   {
-    id: 'spot_indore_1',
-    spot_id: 'spot_indore_1',
+    id: 'spot_indore_vallabh_garden',
+    spot_id: 'spot_indore_vallabh_garden',
+    city: 'indore',
+    name: 'vallabh garden khatiwala tank',
+    description: 'pyau and extensive shade throughout the path nearby',
+    category: 'canopy_park',
+    lat: 22.6973,
+    lon: 75.8626,
+    coords: { lat: 22.6973, lon: 75.8626 },
+    logo_id: 'tree_canopy',
+    coolingOffsetC: 3.5,
+    openHours: '06:00 - 21:00',
+    upvotes: 38,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_nehru_park',
+    spot_id: 'spot_indore_nehru_park',
+    city: 'indore',
+    name: 'Nehru Park Shaded Banyan Walk',
+    description: 'Thick canopy cover with public drinking water tap nearby.',
+    category: 'canopy_park',
+    lat: 22.715,
+    lon: 75.862,
+    coords: { lat: 22.715, lon: 75.862 },
+    logo_id: 'tree_canopy',
+    coolingOffsetC: 4.2,
+    openHours: '06:00 - 21:00',
+    upvotes: 63,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_regional_park',
+    spot_id: 'spot_indore_regional_park',
     city: 'indore',
     name: 'Regional Park Shaded Promenade',
     description: 'Dense neem & banyan canopy with mist breeze near canal bank.',
+    category: 'canopy_park',
     lat: 22.6845,
     lon: 75.8521,
     coords: { lat: 22.6845, lon: 75.8521 },
@@ -46,14 +79,15 @@ const DEFAULT_COOL_SPOTS: CoolSpot[] = [
     openHours: '06:00 - 21:00',
     upvotes: 48,
     verified_by: 'admin@heatsafe.in',
-    created_at: new Date().toISOString(),
+    created_at: '2024-01-01T00:00:00.000Z',
   },
   {
-    id: 'spot_indore_2',
-    spot_id: 'spot_indore_2',
+    id: 'spot_indore_rajwada_kiosk',
+    spot_id: 'spot_indore_rajwada_kiosk',
     city: 'indore',
     name: 'Rajwada Heritage Hydration Kiosk',
     description: 'Filtered cold drinking water station and shaded stone arcade.',
+    category: 'hydration',
     lat: 22.7186,
     lon: 75.8547,
     coords: { lat: 22.7186, lon: 75.8547 },
@@ -62,6 +96,90 @@ const DEFAULT_COOL_SPOTS: CoolSpot[] = [
     openHours: '08:00 - 22:00',
     upvotes: 112,
     verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_56dukan',
+    spot_id: 'spot_indore_56dukan',
+    city: 'indore',
+    name: '56 Dukan Shaded Pergola & Mist Zone',
+    description: 'Pedestrian-only shaded food street with mist fans, fresh coconut water & shikanji.',
+    category: 'shaded_vendor',
+    lat: 22.7245,
+    lon: 75.8841,
+    coords: { lat: 22.7245, lon: 75.8841 },
+    logo_id: 'shaded_stall',
+    coolingOffsetC: 4.5,
+    openHours: '08:00 - 23:00',
+    upvotes: 94,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_ti_mall',
+    spot_id: 'spot_indore_ti_mall',
+    city: 'indore',
+    name: 'Treasure Island (TI) Mall Atrium Refuge',
+    description: 'Air-conditioned public atrium with seating and water stations on MG Road.',
+    category: 'ac_refuge',
+    lat: 22.7218,
+    lon: 75.8788,
+    coords: { lat: 22.7218, lon: 75.8788 },
+    logo_id: 'ac_refuge',
+    coolingOffsetC: 7.5,
+    openHours: '10:00 - 22:30',
+    upvotes: 76,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_bhawarkuan',
+    spot_id: 'spot_indore_bhawarkuan',
+    city: 'indore',
+    name: 'Bhawarkuan Student Hydration & Sugarcane Hub',
+    description: 'Shaded cold sugarcane juice, nimbu pani, and clay matka water stalls near DAVV.',
+    category: 'shaded_vendor',
+    lat: 22.6926,
+    lon: 75.8679,
+    coords: { lat: 22.6926, lon: 75.8679 },
+    logo_id: 'shaded_stall',
+    coolingOffsetC: 3.2,
+    openHours: '08:30 - 22:00',
+    upvotes: 52,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'spot_indore_gandhi_hall',
+    spot_id: 'spot_indore_gandhi_hall',
+    city: 'indore',
+    name: 'Gandhi Hall Shaded Veranda & Water Point',
+    description: 'High-ceiling stone corridor and public drinking water fountain near Regal Circle.',
+    category: 'hydration',
+    lat: 22.7201,
+    lon: 75.8695,
+    coords: { lat: 22.7201, lon: 75.8695 },
+    logo_id: 'water_station',
+    coolingOffsetC: 3.8,
+    openHours: '08:00 - 20:00',
+    upvotes: 39,
+    verified_by: 'admin@heatsafe.in',
+    created_at: '2024-01-01T00:00:00.000Z',
+  },
+];
+
+const DEFAULT_COOL_SPOT_REQUESTS: CoolSpotRequest[] = [
+  {
+    request_id: 'req_khatiwala_tank_seed',
+    user_email: 'walker@indore.in',
+    city: 'indore',
+    suggested_name: 'vallabh garden khatiwala tank',
+    message: 'pyau and extensive shade throughout the path nearby',
+    lat: 22.6973,
+    lon: 75.8626,
+    suggested_logo: 'tree_canopy',
+    spot_image_url: '',
+    status: 'approved',
     created_at: new Date().toISOString(),
   },
 ];
@@ -416,9 +534,10 @@ export async function fetchPlannedRoutes(
 }
 
 export async function fetchLiveUvIndex(lat: number, lon: number): Promise<number> {
+  const weatherBase = import.meta.env.VITE_WEATHER_API_URL || 'https://api.open-meteo.com/v1/forecast';
   try {
     const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=uv_index`
+      `${weatherBase}?latitude=${lat}&longitude=${lon}&current=uv_index`
     );
     if (!res.ok) return 6.5;
     const data = await res.json();
@@ -432,6 +551,71 @@ export async function fetchLiveUvIndex(lat: number, lon: number): Promise<number
 // ==========================================
 // 1. AWS COGNITO / SESSION MANAGEMENT
 // ==========================================
+
+// Helper to decode JWT payload safely without external heavy libraries
+export function parseJwt(token: string): Record<string, any> | null {
+  try {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      window
+        .atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
+export async function handleAuthRedirectCallback(): Promise<AuthSession> {
+  // Cognito Hosted UI returns tokens in the URL hash (#id_token=...&access_token=...)
+  if (typeof window === 'undefined') {
+    return { email: '', role: 'guest' };
+  }
+
+  const hash = window.location.hash || '';
+  if (!hash.includes('id_token')) {
+    return getSavedSession();
+  }
+
+  const params = new URLSearchParams(hash.replace(/^#/, '?'));
+  const idToken = params.get('id_token');
+
+  if (!idToken) return { email: '', role: 'guest' };
+
+  const payload = parseJwt(idToken);
+  if (!payload) return { email: '', role: 'guest' };
+
+  const email = payload.email || payload['cognito:username'] || payload.sub || '';
+
+  // Check if the user belongs to the 'Admins' group you created in Cognito
+  const rawGroups = payload['cognito:groups'] || [];
+  const groups: string[] = Array.isArray(rawGroups) ? rawGroups : [rawGroups];
+  const isAdmin = groups.some((g) => String(g).toLowerCase() === 'admins');
+
+  const session: AuthSession = {
+    email,
+    role: isAdmin ? 'admin' : 'user',
+    token: idToken,
+  };
+
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  notifySync('SESSION_CHANGED', session);
+
+  // Clean up the URL hash so tokens aren't exposed in the address bar
+  try {
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+  } catch {
+    // Non-blocking
+  }
+
+  return session;
+}
+
 export function getSavedSession(): AuthSession {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -567,9 +751,17 @@ export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[
     // safe
   }
 
-  // Fallback to default cool spots if nothing found
-  if (combined.length === 0) {
-    combined.push(...DEFAULT_COOL_SPOTS);
+  // Always ensure all default curated cool spots are present in the list
+  for (const ds of DEFAULT_COOL_SPOTS) {
+    const isDup = combined.some(
+      (s) =>
+        s.spot_id === ds.spot_id ||
+        s.id === ds.id ||
+        (s.name && ds.name && s.name.trim().toLowerCase() === ds.name.trim().toLowerCase())
+    );
+    if (!isDup) {
+      combined.push(ds);
+    }
   }
 
   // Save merged state back to storage safely
@@ -752,9 +944,15 @@ export async function fetchCoolSpotRequests(accessToken?: string): Promise<CoolS
 
   try {
     const stored = localStorage.getItem(REQUESTS_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
+    if (stored) {
+      const parsed: CoolSpotRequest[] = JSON.parse(stored);
+      if (parsed.length > 0) return parsed;
+    }
+    // Pre-seed default requests if empty
+    localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(DEFAULT_COOL_SPOT_REQUESTS));
+    return DEFAULT_COOL_SPOT_REQUESTS;
   } catch {
-    return [];
+    return DEFAULT_COOL_SPOT_REQUESTS;
   }
 }
 
