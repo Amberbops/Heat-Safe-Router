@@ -159,3 +159,6 @@ python -m compileall -q backend
 - **No WAF / CAPTCHA on Public Auth Endpoints**: While `/auth/verify-otp` enforces a 60-second resend cooldown and 5-attempt lockout, `/auth/register` and `/auth/login` rely on standard API Gateway quotas without CAPTCHA or per-IP WAF rate rules.
 - **S3 Direct Media URLs**: `MediaService` uploads AES-256 encrypted images to `heatsafe-coolspots-media` and stores direct `https://<bucket>.s3.<region>.amazonaws.com/<key>` URLs rather than serving via CloudFront signed URLs or API-generated pre-signed GET URLs.
 - **Browser Capability Dependency for Live Telemetry**: Hands-free voice wake-word/dictation and live off-route GPS checks in `MappyAssistant` depend on browser support and granted permissions for Web Speech API and Geolocation.
+
+## NOTE
+backend is fully operational via API gateway, consolidating multiple Endpoints each pointing its different resources, backend directory here has only inference sense of use, to understand and validate, the backend code is done fully on the aws lambda service. to access the api, access to the service is protected behind an authentication layer, ensuring only verified/authorized users can interact with the API. there are few more changes on frontend and backend to commit, will update the code then..
