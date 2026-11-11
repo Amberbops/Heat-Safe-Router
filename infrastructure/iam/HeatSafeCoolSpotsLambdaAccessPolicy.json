@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VerifiedCoolSpotsBaseTableAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:980921726513:table/HeatSafe_CoolSpots"
+    },
+    {
+      "Sid": "QueryCoolSpotsByCityIndex",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Query"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:980921726513:table/HeatSafe_CoolSpots/index/CityIndex"
+    },
+    {
+      "Sid": "NominationRequestsTableAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:980921726513:table/HeatSafe_SpotRequests"
+    },
+    {
+      "Sid": "UploadCoolSpotsMedia",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::heatsafe-coolspots-media/*"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import type {
   WeatherData,
 } from '../types/route';
 import type { CoolSpot, CoolSpotRequest, UserRole, AuthSession } from '../types/coolSpot';
+import { refreshTokens } from './authApi';
 
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || ''
@@ -629,35 +630,42 @@ export function getSavedSession(): AuthSession {
 export async function loginWithAwsCognito(
   email: string,
   password: string,
-  roleSelect: UserRole
+  _roleSelect?: UserRole
 ): Promise<AuthSession> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, role: roleSelect }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const session: AuthSession = {
-        email: data.email || email,
-        role: data.role || roleSelect,
-        token: data.token,
-      };
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-      notifySync('SESSION_CHANGED', session);
-      return session;
+  const res = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim(), password }),
+  });
+
+  if (!res.ok) {
+    let message = 'Invalid email or password.';
+    try {
+      const err = await res.json();
+      message = err.message || err.error || message;
+    } catch {
+      // safe
     }
-  } catch {
-    // Fallback to simulated Cognito token for local dev testing
+    throw new Error(message);
   }
 
+  const data = await res.json();
+  const userRole: UserRole = (data.user?.role as UserRole) || 'user';
+  const userEmail: string = data.user?.email || email;
+  const token: string = data.access_token;
   const session: AuthSession = {
-    email,
-    role: roleSelect,
-    token: `aws-cognito-mock-jwt-${roleSelect}-${Date.now()}`,
+    email: userEmail,
+    role: userRole,
+    token: token,
   };
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  localStorage.setItem('heatsafe_auth_tokens_v2', JSON.stringify({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    token_type: data.token_type,
+    expires_in: data.expires_in,
+  }));
+  localStorage.setItem('heatsafe_auth_user_v2', JSON.stringify(data.user));
   notifySync('SESSION_CHANGED', session);
   return session;
 }
@@ -675,19 +683,36 @@ export function logoutAwsSession(): AuthSession {
 export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[]> {
   const normCity = (city || 'indore').toLowerCase();
 
+  let remoteLoaded = false;
   let remoteSpots: CoolSpot[] = [];
   try {
     const res = await fetch(`${API_BASE_URL}/cool-spots?city=${encodeURIComponent(city)}`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.spots)) {
+        remoteLoaded = true;
         remoteSpots = data.spots;
       }
     }
   } catch {
-    // remote fallback
+    // remote fallback below
   }
 
+  // When AWS DynamoDB responds, treat HeatSafe_CoolSpots as the single source of truth.
+  if (remoteLoaded) {
+    try {
+      const safeToStore = remoteSpots.map((s) => ({
+        ...s,
+        image_url: s.image_url && s.image_url.length > 50000 ? '' : s.image_url,
+      }));
+      localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(safeToStore));
+    } catch {
+      // Non-blocking
+    }
+    return remoteSpots;
+  }
+
+  // Offline fallback only
   let localSpots: CoolSpot[] = [];
   try {
     const stored = localStorage.getItem(SPOTS_STORAGE_KEY);
@@ -696,62 +721,7 @@ export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[
     localSpots = [];
   }
 
-  // Combine remote spots and local spots
-  const combined: CoolSpot[] = [...remoteSpots];
-  for (const ls of localSpots) {
-    const isDup = combined.some(
-      (s) =>
-        s.spot_id === ls.spot_id ||
-        s.id === ls.id ||
-        (s.name && ls.name && s.name.trim().toLowerCase() === ls.name.trim().toLowerCase())
-    );
-    if (!isDup) {
-      combined.push(ls);
-    }
-  }
-
-  // Always merge all approved user requests into live cool spots
-  try {
-    const rawReqs = localStorage.getItem(REQUESTS_STORAGE_KEY);
-    const allReqs: CoolSpotRequest[] = rawReqs ? JSON.parse(rawReqs) : [];
-    const approvedReqs = allReqs.filter(
-      (r) =>
-        (r.status?.toLowerCase() === 'approved' || (r.status as string) === 'APPROVED') &&
-        Boolean(r.suggested_name)
-    );
-
-    for (const req of approvedReqs) {
-      const exists = combined.some(
-        (s) =>
-          s.id === req.request_id ||
-          s.spot_id === req.request_id ||
-          (s.name && s.name.trim().toLowerCase() === req.suggested_name.trim().toLowerCase())
-      );
-      if (!exists) {
-        combined.unshift({
-          id: req.request_id,
-          spot_id: req.request_id,
-          city: req.city || normCity,
-          name: req.suggested_name,
-          description: req.message,
-          lat: req.lat,
-          lon: req.lon,
-          coords: { lat: req.lat, lon: req.lon },
-          logo_id: req.suggested_logo || 'tree_canopy',
-          coolingOffsetC: 3.0,
-          openHours: '06:00 - 22:00',
-          upvotes: 1,
-          verified_by: req.user_email ? `Verified (${req.user_email})` : 'Admin Verified',
-          created_at: req.created_at || new Date().toISOString(),
-          image_url: req.spot_image_url || undefined,
-        });
-      }
-    }
-  } catch {
-    // safe
-  }
-
-  // Always ensure all default curated cool spots are present in the list
+  const combined: CoolSpot[] = [...localSpots];
   for (const ds of DEFAULT_COOL_SPOTS) {
     const isDup = combined.some(
       (s) =>
@@ -764,19 +734,6 @@ export async function fetchCoolSpots(city: string = 'indore'): Promise<CoolSpot[
     }
   }
 
-  // Save merged state back to storage safely
-  try {
-    // Strip oversized base64 images if quota constrained
-    const safeToStore = combined.map((s) => ({
-      ...s,
-      image_url: s.image_url && s.image_url.length > 50000 ? '' : s.image_url,
-    }));
-    localStorage.setItem(SPOTS_STORAGE_KEY, JSON.stringify(safeToStore));
-  } catch {
-    // Non-blocking
-  }
-
-  // Flexible city filtering
   return combined.filter((s) => {
     if (!s.city) return true;
     const spotCity = s.city.toLowerCase();
@@ -799,16 +756,18 @@ export async function upsertAdminCoolSpot(
   };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
-  try {
-    await fetch(`${API_BASE_URL}/admin/cool-spots`, {
+  const res = await authorizedFetch(
+    `${API_BASE_URL}/admin/cool-spots`,
+    {
       method: 'POST',
       headers,
       body: JSON.stringify(newSpot),
-    });
-  } catch {
-    // Local fallback persistence
+    },
+    accessToken
+  );
+
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Failed to save cool spot (HTTP ${res.status})`));
   }
 
   try {
@@ -841,16 +800,14 @@ export async function upsertAdminCoolSpot(
 }
 
 export async function deleteAdminCoolSpot(spotId: string, accessToken?: string): Promise<void> {
-  const headers: Record<string, string> = {};
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  const res = await authorizedFetch(
+    `${API_BASE_URL}/admin/cool-spots/${encodeURIComponent(spotId)}`,
+    { method: 'DELETE' },
+    accessToken
+  );
 
-  try {
-    await fetch(`${API_BASE_URL}/admin/cool-spots/${encodeURIComponent(spotId)}`, {
-      method: 'DELETE',
-      headers,
-    });
-  } catch {
-    // Local fallback
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Failed to delete cool spot (HTTP ${res.status})`));
   }
 
   try {
@@ -867,6 +824,103 @@ export async function deleteAdminCoolSpot(spotId: string, accessToken?: string):
 
 export const deleteCoolSpot = deleteAdminCoolSpot;
 
+function getActiveToken(passedToken?: string): string | undefined {
+  try {
+    const rawTokens = localStorage.getItem('heatsafe_auth_tokens_v2');
+    if (rawTokens) {
+      const parsed = JSON.parse(rawTokens);
+      if (parsed.access_token) return parsed.access_token;
+    }
+  } catch {
+    // safe
+  }
+  if (passedToken) return passedToken;
+  try {
+    const rawSession = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession);
+      if (parsed.token) return parsed.token;
+    }
+  } catch {
+    // safe
+  }
+  return undefined;
+}
+
+async function tryRotateExpiredToken(): Promise<string | undefined> {
+  try {
+    const rawTokens = localStorage.getItem('heatsafe_auth_tokens_v2');
+    if (!rawTokens) return undefined;
+    const parsedTokens = JSON.parse(rawTokens);
+    if (!parsedTokens?.refresh_token) return undefined;
+
+    const refreshed = await refreshTokens(parsedTokens.refresh_token);
+    if (!refreshed?.access_token) return undefined;
+
+    const updatedTokens = {
+      ...parsedTokens,
+      access_token: refreshed.access_token,
+      expires_in: refreshed.expires_in,
+    };
+    localStorage.setItem('heatsafe_auth_tokens_v2', JSON.stringify(updatedTokens));
+
+    const rawLegacy = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (rawLegacy) {
+      const parsedLegacy = JSON.parse(rawLegacy);
+      localStorage.setItem(
+        AUTH_STORAGE_KEY,
+        JSON.stringify({ ...parsedLegacy, token: refreshed.access_token })
+      );
+    }
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('heatsafe_auth_broadcast');
+      bc.postMessage({ type: 'AUTH_STATE_CHANGE' });
+      bc.close();
+    }
+    return refreshed.access_token;
+  } catch {
+    return undefined;
+  }
+}
+
+async function authorizedFetch(
+  url: string,
+  init: RequestInit = {},
+  passedToken?: string
+): Promise<Response> {
+  const buildHeaders = (token?: string) => {
+    const headers: Record<string, string> = {
+      ...(init.headers as Record<string, string> | undefined),
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  };
+
+  let token = getActiveToken(passedToken);
+  let res = await fetch(url, { ...init, headers: buildHeaders(token) });
+
+  if (res.status === 401) {
+    const freshToken = await tryRotateExpiredToken();
+    if (freshToken && freshToken !== token) {
+      res = await fetch(url, { ...init, headers: buildHeaders(freshToken) });
+    }
+  }
+
+  return res;
+}
+
+async function extractApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json();
+    if (data?.error) return String(data.error);
+    if (data?.message) return String(data.message);
+  } catch {
+    // non-JSON body
+  }
+  return fallback;
+}
+
 // ==========================================
 // 3. USER REQUEST QUEUE & ADMIN REQUESTS
 // ==========================================
@@ -874,7 +928,8 @@ export async function submitCoolSpotRequest(
   payload: Omit<CoolSpotRequest, 'request_id' | 'status' | 'created_at'>,
   accessToken?: string
 ): Promise<CoolSpotRequest> {
-  const newRequest: CoolSpotRequest = {
+  const token = getActiveToken(accessToken);
+  let newRequest: CoolSpotRequest = {
     ...payload,
     request_id: `req_${Date.now()}`,
     status: 'pending',
@@ -882,16 +937,28 @@ export async function submitCoolSpotRequest(
   };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   // 1. Attempt AWS API Gateway sync
   try {
     const res = await fetch(`${API_BASE_URL}/cool-spots/requests`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(newRequest),
+      body: JSON.stringify({
+        city: newRequest.city || 'indore',
+        suggested_name: newRequest.suggested_name,
+        message: newRequest.message,
+        lat: Number(newRequest.lat),
+        lon: Number(newRequest.lon),
+        suggested_logo: newRequest.suggested_logo,
+        spot_image_url: newRequest.spot_image_url,
+      }),
     });
     if (res.ok) {
+      const saved = await res.json();
+      if (saved.request_id) {
+        newRequest.request_id = saved.request_id;
+      }
       console.info('[AWS Sync] Successfully synced cool spot request to AWS.');
     } else {
       console.info(`[AWS Sync] Endpoint returned ${res.status}. Storing in persistent sync queue.`);
@@ -929,14 +996,18 @@ export async function submitCoolSpotRequest(
 export const submitUserCoolSpotRequest = submitCoolSpotRequest;
 
 export async function fetchCoolSpotRequests(accessToken?: string): Promise<CoolSpotRequest[]> {
-  const headers: Record<string, string> = {};
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
   try {
-    const res = await fetch(`${API_BASE_URL}/admin/cool-spots/requests`, { headers });
+    const res = await authorizedFetch(`${API_BASE_URL}/admin/cool-spots/requests`, {}, accessToken);
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.requests)) return data.requests;
+      if (Array.isArray(data.requests)) {
+        try {
+          localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(data.requests));
+        } catch {
+          // Non-blocking
+        }
+        return data.requests;
+      }
     }
   } catch {
     // Local fallback
@@ -964,17 +1035,29 @@ export async function updateSpotRequestStatus(
   accessToken?: string
 ): Promise<void> {
   const normalizedStatus = status.toUpperCase() as 'APPROVED' | 'REJECTED';
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
+  let res: Response;
   try {
-    await fetch(`${API_BASE_URL}/admin/cool-spots/requests/${encodeURIComponent(requestId)}`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ status: normalizedStatus }),
-    });
-  } catch {
-    // Local fallback
+    res = await authorizedFetch(
+      `${API_BASE_URL}/admin/cool-spots/requests/${encodeURIComponent(requestId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: normalizedStatus }),
+      },
+      accessToken
+    );
+  } catch (err: any) {
+    throw new Error(
+      err?.message ||
+        'Network/CORS error reaching PATCH /admin/cool-spots/requests/{id}. Check API Gateway CORS for PATCH.'
+    );
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      await extractApiError(res, `Failed to update request status (HTTP ${res.status})`)
+    );
   }
 
   try {

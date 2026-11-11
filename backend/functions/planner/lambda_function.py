@@ -5,7 +5,6 @@ import urllib.request
 import urllib.error
 import math
 import uuid
-import base64
 from decimal import Decimal
 from datetime import datetime, timezone
 import boto3  # pyright: ignore[reportMissingImports]
@@ -16,88 +15,12 @@ import boto3  # pyright: ignore[reportMissingImports]
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 HEIGIT_API_KEY = os.environ.get("HEIGIT_API_KEY", "")
 DYNAMODB_TABLE_NAME = os.environ.get("DYNAMODB_TABLE_NAME", "HeatSafe_RoutePlans")
-COOL_SPOTS_TABLE_NAME = os.environ.get("COOL_SPOTS_TABLE", "HeatSafe_CoolSpots")
-SPOT_REQUESTS_TABLE_NAME = os.environ.get("SPOT_REQUESTS_TABLE", "HeatSafe_SpotRequests")
 
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 route_plans_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
-spots_table = dynamodb.Table(COOL_SPOTS_TABLE_NAME)
-requests_table = dynamodb.Table(SPOT_REQUESTS_TABLE_NAME)
 
 WEATHER_URL = os.environ.get("WEATHER_API_URL", "https://api.open-meteo.com/v1/forecast")
 ROUTING_URL = "https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson"
-
-# Default seed cool spots for Indore
-INITIAL_VERIFIED_SPOTS = [
-    {
-        "spot_id": "spot_indore_vallabh_garden",
-        "id": "spot_indore_vallabh_garden",
-        "city": "indore",
-        "name": "vallabh garden khatiwala tank",
-        "description": "pyau and extensive shade throughout the path nearby",
-        "category": "canopy_park",
-        "lat": 22.6973,
-        "lon": 75.8626,
-        "coords": {"lat": 22.6973, "lon": 75.8626},
-        "logo_id": "tree_canopy",
-        "coolingOffsetC": 3.5,
-        "openHours": "06:00 - 21:00",
-        "upvotes": 38,
-        "verified_by": "admin@heatsafe.in",
-        "created_at": "2024-01-01T00:00:00Z",
-    },
-    {
-        "spot_id": "spot_indore_nehru_park",
-        "id": "spot_indore_nehru_park",
-        "city": "indore",
-        "name": "Nehru Park Shaded Banyan Walk",
-        "description": "Thick canopy cover with public drinking water tap nearby.",
-        "category": "canopy_park",
-        "lat": 22.7150,
-        "lon": 75.8620,
-        "coords": {"lat": 22.7150, "lon": 75.8620},
-        "logo_id": "tree_canopy",
-        "coolingOffsetC": 4.2,
-        "openHours": "06:00 - 21:00",
-        "upvotes": 63,
-        "verified_by": "admin@heatsafe.in",
-        "created_at": "2024-01-01T00:00:00Z",
-    },
-    {
-        "spot_id": "spot_indore_regional_park",
-        "id": "spot_indore_regional_park",
-        "city": "indore",
-        "name": "Regional Park Shaded Promenade",
-        "description": "Dense neem & banyan canopy with mist breeze near canal bank.",
-        "category": "canopy_park",
-        "lat": 22.6845,
-        "lon": 75.8521,
-        "coords": {"lat": 22.6845, "lon": 75.8521},
-        "logo_id": "tree_canopy",
-        "coolingOffsetC": 3.5,
-        "openHours": "06:00 - 21:00",
-        "upvotes": 48,
-        "verified_by": "admin@heatsafe.in",
-        "created_at": "2024-01-01T00:00:00Z",
-    },
-    {
-        "spot_id": "spot_indore_rajwada_kiosk",
-        "id": "spot_indore_rajwada_kiosk",
-        "city": "indore",
-        "name": "Rajwada Heritage Hydration Kiosk",
-        "description": "Filtered cold drinking water station and shaded stone arcade.",
-        "category": "hydration",
-        "lat": 22.7186,
-        "lon": 75.8547,
-        "coords": {"lat": 22.7186, "lon": 75.8547},
-        "logo_id": "water_station",
-        "coolingOffsetC": 2.0,
-        "openHours": "08:00 - 22:00",
-        "upvotes": 112,
-        "verified_by": "admin@heatsafe.in",
-        "created_at": "2024-01-01T00:00:00Z",
-    },
-]
 
 # ============================================================
 # Type & JSON Serialization Helpers
@@ -146,47 +69,6 @@ def api_error(status_code, code, message):
         "status": "error", "code": code, "message": message,
         "error": {"code": code, "message": message},
     })
-
-# ============================================================
-# Authorization Guard (Cognito 'Admins' Group)
-# ============================================================
-def is_admin_authorized(event) -> bool:
-    """Verifies whether caller has 'Admins' group in Cognito Authorizer claims or JWT token."""
-    # 1. API Gateway Authorizer claims
-    auth_ctx = event.get("requestContext", {}).get("authorizer", {})
-    claims = auth_ctx.get("claims", {})
-    if claims:
-        groups = claims.get("cognito:groups", "")
-        if isinstance(groups, list) and any(str(g).lower() == "admins" for g in groups):
-            return True
-        if isinstance(groups, str) and any(g.strip().lower() == "admins" for g in groups.split(",")):
-            return True
-
-    # 2. Authorization Bearer header inspection
-    headers = event.get("headers") or {}
-    auth_header = headers.get("Authorization") or headers.get("authorization") or ""
-    if auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1]
-        try:
-            parts = token.split(".")
-            if len(parts) >= 2:
-                payload_b64 = parts[1]
-                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
-                payload_json = base64.b64decode(payload_b64).decode("utf-8")
-                token_claims = json.loads(payload_json)
-                groups = token_claims.get("cognito:groups", [])
-                if isinstance(groups, list) and any(str(g).lower() == "admins" for g in groups):
-                    return True
-                if isinstance(groups, str) and any(g.strip().lower() == "admins" for g in groups.split(",")):
-                    return True
-        except Exception:
-            pass
-
-    # 3. Development test fallback
-    if "aws-cognito-mock-jwt-admin" in auth_header:
-        return True
-
-    return False
 
 # ============================================================
 # Utility & Math Helpers
@@ -470,172 +352,7 @@ def lambda_handler(event, context):
         return api_response(204, {})
 
     # ========================================================
-    # 1. COOL SPOTS & ADMIN ENDPOINTS
-    # ========================================================
-    # GET /cool-spots?city=indore
-    if "cool-spots" in path and http_method == "GET" and "requests" not in path:
-        try:
-            query = event.get("queryStringParameters") or {}
-            city = query.get("city", "indore").strip().lower()
-            resp = spots_table.scan()
-            items = [i for i in resp.get("Items", []) if str(i.get("city", "")).lower() == city]
-            existing_names = {str(i.get("name", "")).strip().lower() for i in items}
-
-            # 1. Ensure all curated seed spots (including khatiwala tank) are present in DynamoDB
-            if city == "indore":
-                for seed in INITIAL_VERIFIED_SPOTS:
-                    if str(seed["name"]).strip().lower() not in existing_names:
-                        try:
-                            spots_table.put_item(Item=convert_to_dynamodb(seed))
-                            items.append(seed)
-                            existing_names.add(str(seed["name"]).strip().lower())
-                        except Exception as e:
-                            print("Seeding error:", e)
-
-            # 2. Auto-promote any requests that were marked 'approved' in requests_table
-            try:
-                req_resp = requests_table.scan()
-                for req in req_resp.get("Items", []):
-                    if str(req.get("status", "")).lower() == "approved":
-                        req_city = str(req.get("city", "indore")).lower()
-                        req_name = req.get("suggested_name") or req.get("name") or "Verified Cool Spot"
-                        if req_city == city and req_name.strip().lower() not in existing_names:
-                            promoted_spot = {
-                                "spot_id": req.get("request_id") or f"spot-{uuid.uuid4()}",
-                                "id": req.get("request_id") or f"spot-{uuid.uuid4()}",
-                                "city": req_city,
-                                "name": req_name,
-                                "description": req.get("message") or req.get("description", ""),
-                                "category": req.get("category", "canopy_park"),
-                                "lat": req.get("lat", 22.7196),
-                                "lon": req.get("lon", 75.8577),
-                                "coords": {"lat": req.get("lat", 22.7196), "lon": req.get("lon", 75.8577)},
-                                "logo_id": req.get("suggested_logo") or req.get("logo_id", "tree_canopy"),
-                                "coolingOffsetC": Decimal("3.5"),
-                                "openHours": req.get("openHours", "06:00 - 21:00"),
-                                "upvotes": int(req.get("upvotes", 1)),
-                                "verified_by": f"Verified ({req.get('user_email', 'Admin')})",
-                                "created_at": req.get("created_at") or datetime.now(timezone.utc).isoformat(),
-                                "image_url": req.get("spot_image_url") or req.get("image_url", ""),
-                            }
-                            try:
-                                spots_table.put_item(Item=convert_to_dynamodb(promoted_spot))
-                                items.append(promoted_spot)
-                                existing_names.add(req_name.strip().lower())
-                            except Exception as pe:
-                                print("Error putting promoted spot:", pe)
-            except Exception as sync_err:
-                print("Auto-promotion scan error:", sync_err)
-
-            return api_response(200, {"spots": items, "count": len(items)})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-            
-    # POST /cool-spots/requests (Community User submits Cool Spot nomination)
-    if "cool-spots/requests" in path and http_method == "POST":
-        try:
-            body = json.loads(event.get("body") or "{}")
-            if not body.get("request_id"):
-                body["request_id"] = f"req-{uuid.uuid4()}"
-            if not body.get("status"):
-                body["status"] = "pending"
-            if not body.get("created_at"):
-                body["created_at"] = datetime.now(timezone.utc).isoformat()
-            
-            item_to_save = convert_to_dynamodb(body)
-            requests_table.put_item(Item=item_to_save)
-            return api_response(201, {"saved": True, "request_id": body["request_id"]})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-
-    # GET /admin/cool-spots/requests (Admin views pending & historical requests)
-    if ("admin/cool-spots/requests" in path or ("cool-spots/requests" in path and "admin" in path)) and http_method == "GET":
-        if not is_admin_authorized(event):
-            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
-        try:
-            resp = requests_table.scan()
-            return api_response(200, {"requests": resp.get("Items", [])})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-
-    # POST /admin/cool-spots (Admin creates or edits a verified Cool Spot)
-    if ("admin/cool-spots" in path or path.endswith("/cool-spots")) and http_method == "POST" and "requests" not in path:
-        if not is_admin_authorized(event):
-            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
-        try:
-            body = json.loads(event.get("body") or "{}")
-            if not body.get("spot_id"):
-                body["spot_id"] = f"spot-{uuid.uuid4()}"
-            if not body.get("id"):
-                body["id"] = body["spot_id"]
-            if not body.get("created_at"):
-                body["created_at"] = datetime.now(timezone.utc).isoformat()
-            
-            item_to_save = convert_to_dynamodb(body)
-            spots_table.put_item(Item=item_to_save)
-            return api_response(200, {"spot": body})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-
-    # PATCH /admin/cool-spots/requests/{id} (Admin approves or rejects request)
-    if "requests/" in path and http_method in ("PATCH", "PUT", "POST"):
-        if not is_admin_authorized(event):
-            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
-        try:
-            req_id = path.rstrip("/").split("/")[-1]
-            body = json.loads(event.get("body") or "{}")
-            new_status = body.get("status", "approved").lower()
-
-            # 1. Update request status
-            requests_table.update_item(
-                Key={"request_id": req_id},
-                UpdateExpression="SET #s = :s",
-                ExpressionAttributeNames={"#s": "status"},
-                ExpressionAttributeValues={":s": new_status}
-            )
-
-            # 2. If approved, automatically promote nomination into live Cool Spots table!
-            if new_status == "approved":
-                get_res = requests_table.get_item(Key={"request_id": req_id})
-                req_item = get_res.get("Item")
-                if req_item:
-                    spot_entry = {
-                        "spot_id": req_id,
-                        "id": req_id,
-                        "city": req_item.get("city", "indore").lower(),
-                        "name": req_item.get("suggested_name") or "Verified Cool Spot",
-                        "description": req_item.get("message", ""),
-                        "category": "canopy_park",
-                        "lat": req_item.get("lat", 22.7196),
-                        "lon": req_item.get("lon", 75.8577),
-                        "coords": {"lat": req_item.get("lat", 22.7196), "lon": req_item.get("lon", 75.8577)},
-                        "logo_id": req_item.get("suggested_logo", "tree_canopy"),
-                        "coolingOffsetC": Decimal("3.5"),
-                        "openHours": "06:00 - 21:00",
-                        "upvotes": 1,
-                        "verified_by": f"Verified ({req_item.get('user_email', 'Admin')})",
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "image_url": req_item.get("spot_image_url", ""),
-                    }
-                    spots_table.put_item(Item=convert_to_dynamodb(spot_entry))
-
-            return api_response(200, {"updated": True, "request_id": req_id, "status": new_status})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-
-    # DELETE /admin/cool-spots/{id} (Admin removes a verified spot)
-    if "admin/cool-spots/" in path and http_method == "DELETE":
-        if not is_admin_authorized(event):
-            return api_error(403, "FORBIDDEN", "Forbidden: Requires 'Admins' group privileges.")
-        try:
-            spot_id = path.rstrip("/").split("/")[-1]
-            spots_table.delete_item(Key={"spot_id": spot_id})
-            return api_response(200, {"deleted": True, "spot_id": spot_id})
-        except Exception as e:
-            return api_error(500, "DYNAMODB_ERROR", str(e))
-
-    # ========================================================
-    # 2. CORE ROUTING PLANNER ENDPOINT
+    # CORE ROUTING PLANNER ENDPOINT
     # ========================================================
     try:
         query = event.get("queryStringParameters") or {}
