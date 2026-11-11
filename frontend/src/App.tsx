@@ -27,11 +27,14 @@ import { WeatherWidget } from './components/WeatherWidget';
 import { SystemInfoModal } from './components/SystemInfoModal';
 import { MappyAssistant } from './components/MappyAssistant';
 import { CoolSpotPortal } from './components/CoolSpotPortal';
+import { AuthBar } from './components/authBar';
+import { AuthModal } from './components/AuthModal';
+import { AuthPage } from './components/AuthPage';
+import { useAuth } from './context/AuthContext';
 import {
   fetchCoolSpots,
   fetchCoolSpotRequests,
   getSavedSession,
-  handleAuthRedirectCallback,
 } from './api/plannerApi';
 
 import type { AuthSession, CoolSpot, CoolSpotRequest } from './types/coolSpot';
@@ -79,19 +82,22 @@ export function App() {
   const [planResult, setPlanResult] = useState<PlanRouteResponse | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [activeMode, setActiveMode] = useState<RecommendationMode>('heat_safe');
+  const [activeNav, setActiveNav] = useState<string>('home');
   const [isSystemModalOpen, setIsSystemModalOpen] = useState<boolean>(false);
+  const { session: contextAuthSession, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const [authSession, setAuthSession] = useState<AuthSession>(() => getSavedSession());
 
   useEffect(() => {
-    // Check URL hash for Cognito tokens on mount
-    handleAuthRedirectCallback().then((activeSession) => {
-      if (activeSession.role !== 'guest') {
-        setAuthSession(activeSession);
-      } else {
-        setAuthSession(getSavedSession());
-      }
-    });
+    if (contextAuthSession) {
+      setAuthSession({
+        email: contextAuthSession.email,
+        role: contextAuthSession.role,
+        token: contextAuthSession.token,
+      });
+    }
+  }, [contextAuthSession]);
 
+  useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'heatsafe_aws_auth_session_v1') {
         setAuthSession(getSavedSession());
@@ -111,8 +117,9 @@ export function App() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     refreshCoolSpotData();
-  }, [selectedCity.id, authSession.role]);
+  }, [isAuthenticated, selectedCity.id, authSession.role]);
 
   const activeRequestController = useRef<AbortController | null>(null);
 
@@ -146,7 +153,26 @@ export function App() {
     elements.forEach((el) => observer.observe(el));
 
     return () => observer.disconnect();
-  }, [planResult]);
+  }, [planResult, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const sectionIds = ['home', 'route-planner', 'methodology', 'analytics', 'cool-spots-portal'];
+    const handleScroll = () => {
+      const scrollMarker = window.scrollY + 180;
+      let current = 'home';
+      for (const id of sectionIds) {
+        const el = document.getElementById(id);
+        if (el && el.offsetTop <= scrollMarker) {
+          current = id;
+        }
+      }
+      setActiveNav(current);
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isAuthenticated]);
 
   const handleCityChange = (cityId: string) => {
     const nextCity = SUPPORTED_CITIES[cityId];
@@ -293,18 +319,25 @@ export function App() {
   const scrollToPlanner = () => {
     document.getElementById('route-planner')?.scrollIntoView({ behavior: 'smooth' });
   };
-  const [, setSession] = useState<AuthSession>({ email: '', role: 'guest' });
 
-useEffect(() => {
-  // Check URL hash for Cognito tokens on mount
-  handleAuthRedirectCallback().then((activeSession) => {
-    if (activeSession.role !== 'guest') {
-      setSession(activeSession);
-    } else {
-      setSession(getSavedSession());
-    }
-  });
-}, []);
+  if (!isAuthenticated) {
+    return (
+      <>
+        <svg className="noise-overlay" aria-hidden="true">
+          <filter id="heatsafe-fractal-noise">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.8"
+              numOctaves="3"
+              stitchTiles="stitch"
+            />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#heatsafe-fractal-noise)" />
+        </svg>
+        <AuthPage isAuthPending={isAuthLoading} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -323,7 +356,13 @@ useEffect(() => {
       <header className="fixed-nav" role="banner">
         <a
           href="#home"
-          style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column' }}
+          onClick={() => setActiveNav('home')}
+          style={{
+            textDecoration: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            flexShrink: 0,
+          }}
         >
           <span
             style={{
@@ -331,17 +370,19 @@ useEffect(() => {
               fontSize: '1.35rem',
               letterSpacing: '0.02em',
               lineHeight: 1,
+              whiteSpace: 'nowrap',
             }}
           >
             — HEATSAFE
           </span>
           <span
             style={{
-              fontSize: '0.58rem',
+              fontSize: '0.56rem',
               fontWeight: 700,
-              letterSpacing: '0.26em',
+              letterSpacing: '0.24em',
               marginTop: '0.15rem',
               opacity: 0.78,
+              whiteSpace: 'nowrap',
             }}
           >
             CLIMATE-AWARE NAVIGATION
@@ -351,34 +392,54 @@ useEffect(() => {
         <nav aria-label="Primary Navigation">
           <ul className="nav-links">
             <li>
-              <a href="#home" className="nav-link">
-                HOME
+              <a
+                href="#home"
+                onClick={() => setActiveNav('home')}
+                className={`nav-link${activeNav === 'home' ? ' is-active' : ''}`}
+              >
+                <span>HOME</span>
               </a>
             </li>
             <li>
-              <a href="#route-planner" className="nav-link">
-                ROUTE PLANNER
+              <a
+                href="#route-planner"
+                onClick={() => setActiveNav('route-planner')}
+                className={`nav-link${activeNav === 'route-planner' ? ' is-active' : ''}`}
+              >
+                <span>ROUTE PLANNER</span>
               </a>
             </li>
             <li>
-              <a href="#methodology" className="nav-link">
-                METHODOLOGY
+              <a
+                href="#methodology"
+                onClick={() => setActiveNav('methodology')}
+                className={`nav-link${activeNav === 'methodology' ? ' is-active' : ''}`}
+              >
+                <span>METHODOLOGY</span>
               </a>
             </li>
             <li>
-              <a href="#analytics" className="nav-link">
-                IMPACT
+              <a
+                href="#analytics"
+                onClick={() => setActiveNav('analytics')}
+                className={`nav-link${activeNav === 'analytics' ? ' is-active' : ''}`}
+              >
+                <span>IMPACT</span>
               </a>
             </li>
             <li>
-              <a href="#cool-spots-portal" className="nav-link">
-                {authSession.role === 'admin' ? 'ADMIN CONSOLE' : 'COOL SPOTS'}
+              <a
+                href="#cool-spots-portal"
+                onClick={() => setActiveNav('cool-spots-portal')}
+                className={`nav-link${activeNav === 'cool-spots-portal' ? ' is-active' : ''}`}
+              >
+                <span>{authSession.role === 'admin' ? 'ADMIN CONSOLE' : 'COOL SPOTS'}</span>
               </a>
             </li>
           </ul>
         </nav>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexShrink: 0 }}>
           <button
             type="button"
             onClick={() => setIsSystemModalOpen(true)}
@@ -386,14 +447,15 @@ useEffect(() => {
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '0.45rem',
-              padding: '0.45rem 0.85rem',
+              gap: '0.4rem',
+              padding: '0.45rem 0.8rem',
               borderRadius: '999px',
               backgroundColor: 'var(--color-olive)',
               border: '1px solid rgba(1, 71, 46, 0.18)',
-              fontSize: '0.68rem',
+              fontSize: '0.65rem',
               fontWeight: 700,
-              letterSpacing: '0.16em',
+              letterSpacing: '0.14em',
+              whiteSpace: 'nowrap',
               cursor: 'pointer',
             }}
           >
@@ -413,11 +475,18 @@ useEffect(() => {
             AWS: {apiOnline === null ? 'CHECKING' : apiOnline ? 'ONLINE' : 'OFFLINE'}
           </button>
 
+          <AuthBar />
+
           <button
             type="button"
             onClick={scrollToPlanner}
             className="btn-pill-primary"
-            style={{ padding: '0.65rem 1.25rem', fontSize: '0.72rem' }}
+            style={{
+              padding: '0.62rem 1.15rem',
+              fontSize: '0.7rem',
+              letterSpacing: '0.16em',
+              whiteSpace: 'nowrap',
+            }}
           >
             PLAN A ROUTE
           </button>
@@ -1037,6 +1106,8 @@ useEffect(() => {
         isApiOnline={apiOnline}
         requestId={planResult?.request_id}
       />
+
+      <AuthModal />
     </>
   );
 }

@@ -21,13 +21,13 @@ import {
   type CoolSpotRequest,
 } from '../types/coolSpot';
 import {
-  loginWithAwsCognito,
   logoutAwsSession,
   submitCoolSpotRequest,
   upsertAdminCoolSpot,
   deleteAdminCoolSpot,
   updateAdminRequest,
 } from '../api/plannerApi';
+import { useAuth } from '../context/AuthContext';
 
 interface CoolSpotPortalProps {
   cityId: string;
@@ -52,11 +52,14 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
   onRefreshData,
   onFocusSpotOnMap,
 }) => {
+  const { openAuthModal, loginWithAmazon, login } = useAuth();
+
   // Login Form State
   const [loginRoleTab, setLoginRoleTab] = useState<'user' | 'admin'>('user');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // User Cool Spot Submission State
   const [reqName, setReqName] = useState('');
@@ -77,6 +80,10 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
   const [adminLogo, setAdminLogo] = useState<CoolSpotLogoId>('tree_canopy');
   const [adminSpotImage, setAdminSpotImage] = useState<string>('');
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
+  const [adminQueueError, setAdminQueueError] = useState<string | null>(null);
+  const [adminQueueNotice, setAdminQueueNotice] = useState<string | null>(null);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
+  const [queueFilter, setQueueFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
 
   // Convert uploaded Cool Spot photo for S3 / storage preview
   const handleImageFileChange = (
@@ -111,15 +118,17 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
     );
   };
 
-  // Handle AWS Cognito Login
+  // Handle Login via unified AWS Auth
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || !password) return;
     setAuthLoading(true);
+    setLoginError(null);
     try {
-      const nextSession = await loginWithAwsCognito(email.trim(), password, loginRoleTab);
-      onSessionChange(nextSession);
+      await login(email.trim(), password);
       setPassword('');
+    } catch (err: any) {
+      setLoginError(err?.message || 'Invalid email or password. Please verify credentials.');
     } finally {
       setAuthLoading(false);
     }
@@ -188,38 +197,60 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
     setTimeout(() => setAdminNotice(null), 4000);
   };
 
-  // Admin 1-Click Verify & Approve User Request
+  // Admin 1-Click Verify & Approve User Request (uses backend atomic transaction)
   const handleApproveRequest = async (req: CoolSpotRequest) => {
-    const safeImage = req.spot_image_url && req.spot_image_url.length > 60000 ? '' : req.spot_image_url;
-
-    await upsertAdminCoolSpot(
-      {
-        id: req.request_id,
-        spot_id: req.request_id,
-        city: req.city || cityId || 'indore',
-        name: req.suggested_name,
-        description: req.message,
-        lat: req.lat,
-        lon: req.lon,
-        coords: {
-          lat: req.lat,
-          lon: req.lon,
-        },
-        logo_id: req.suggested_logo,
-        image_url: safeImage || undefined,
-        verified_by: session.email || 'Admin',
-      },
-      session.token
-    );
-    await updateAdminRequest(req.request_id, 'APPROVED', session.token);
-    setAdminNotice(`Verified & published "${req.suggested_name}" to map!`);
-    onRefreshData();
-    setTimeout(() => setAdminNotice(null), 4000);
+    setAdminQueueError(null);
+    setAdminQueueNotice(null);
+    setProcessingRequestId(req.request_id);
+    try {
+      if (req.status?.toLowerCase() === 'pending') {
+        await updateAdminRequest(req.request_id, 'APPROVED', session.token);
+      } else {
+        const safeImage = req.spot_image_url && req.spot_image_url.length > 60000 ? '' : req.spot_image_url;
+        await upsertAdminCoolSpot(
+          {
+            id: req.request_id,
+            spot_id: req.request_id,
+            city: req.city || cityId || 'indore',
+            name: req.suggested_name,
+            description: req.message,
+            lat: req.lat,
+            lon: req.lon,
+            coords: {
+              lat: req.lat,
+              lon: req.lon,
+            },
+            logo_id: req.suggested_logo,
+            image_url: safeImage || undefined,
+            verified_by: session.email || 'Admin',
+          },
+          session.token
+        );
+      }
+      setAdminQueueNotice(`Verified & published "${req.suggested_name}" to map!`);
+      onRefreshData();
+      setTimeout(() => setAdminQueueNotice(null), 4000);
+    } catch (err: any) {
+      setAdminQueueError(err?.message || 'Failed to approve cool spot request.');
+    } finally {
+      setProcessingRequestId(null);
+    }
   };
 
-  const handleRejectRequest = async (requestId: string) => {
-    await updateAdminRequest(requestId, 'REJECTED', session.token);
-    onRefreshData();
+  const handleRejectRequest = async (req: CoolSpotRequest) => {
+    setAdminQueueError(null);
+    setAdminQueueNotice(null);
+    setProcessingRequestId(req.request_id);
+    try {
+      await updateAdminRequest(req.request_id, 'REJECTED', session.token);
+      setAdminQueueNotice(`Rejected "${req.suggested_name}".`);
+      onRefreshData();
+      setTimeout(() => setAdminQueueNotice(null), 4000);
+    } catch (err: any) {
+      setAdminQueueError(err?.message || 'Failed to reject cool spot request.');
+    } finally {
+      setProcessingRequestId(null);
+    }
   };
 
   const loadSpotIntoAdminEditor = (spot: CoolSpot) => {
@@ -235,7 +266,13 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
   const getLogoMeta = (id: CoolSpotLogoId) =>
     COOL_SPOT_LOGOS.find((l) => l.id === id) || COOL_SPOT_LOGOS[0];
 
-  const pendingRequests = requests.filter((r) => r.status === 'pending');
+  const pendingRequests = requests.filter((r) => r.status?.toLowerCase() === 'pending');
+  const approvedRequests = requests.filter((r) => r.status?.toLowerCase() === 'approved');
+  const rejectedRequests = requests.filter((r) => r.status?.toLowerCase() === 'rejected');
+  const visibleQueueRequests =
+    queueFilter === 'all'
+      ? requests
+      : requests.filter((r) => r.status?.toLowerCase() === queueFilter);
 
   return (
     <section
@@ -362,6 +399,122 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
                   ? 'Sign in as an Admin to verify user-submitted Cool Spot photos & coordinates, or customize Cool Spot logos and descriptions directly.'
                   : 'Sign in as a User to send a photo of a Cool Spot along with its Latitude, Longitude, and description for Admin verification.'}
               </p>
+
+              {/* Login with Amazon Gateway & Full Modal Trigger */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await loginWithAmazon();
+                    } catch (err: any) {
+                      setLoginError(err?.message || 'Login with Amazon failed.');
+                    }
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.65rem',
+                    padding: '0.75rem 1rem',
+                    backgroundColor: '#232F3E',
+                    border: '1.5px solid #131921',
+                    borderRadius: '999px',
+                    color: '#ffffff',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.03em',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(35, 47, 62, 0.2)',
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M13.5 12.8c-1.3 0-2.2.3-2.8.9-.6.6-.7 1.3-.7 2 0 .9.3 1.6.8 2.1.5.5 1.3.8 2.2.8 1.1 0 2.1-.4 2.8-1.2.7-.8 1.1-1.8 1.1-3v-1.6h-3.4zm4.8 4.8c-.5.6-1.1 1.1-1.8 1.4-.7.3-1.6.5-2.6.5-1.5 0-2.7-.4-3.6-1.3-.9-.9-1.3-2-1.3-3.4 0-1.5.5-2.7 1.5-3.6 1-.9 2.4-1.3 4.2-1.3h3.5v-.8c0-1.1-.3-1.9-.9-2.5-.6-.6-1.5-.9-2.7-.9-1.3 0-2.5.4-3.5 1.1-.3.2-.6.1-.8-.1l-1.1-1.3c-.2-.2-.2-.5 0-.7 1.5-1.1 3.3-1.7 5.3-1.7 2 0 3.6.5 4.6 1.5 1 1 1.5 2.5 1.5 4.4v7.9c0 .4.2.7.5.9.2.1.2.4.1.6l-1.7 1.2c-.3.2-.6.1-.8-.2l-.5-.9z"
+                      fill="#FFFFFF"
+                    />
+                    <path
+                      d="M21.5 18.2c-2.8 2-6.5 3.1-10.4 3.1-4.7 0-9-1.6-12.6-4.5-.3-.2-.3-.6 0-.8.2-.2.6-.2.8 0 3.4 2.7 7.5 4.2 11.8 4.2 3.6 0 7-1 9.6-2.8.4-.3.9 0 .8.8z"
+                      fill="#FF9900"
+                    />
+                    <path
+                      d="M22.2 16.9c-.3-.4-1.8-.2-2.7-.1-.3 0-.4-.3-.2-.5 1.4-1.2 3.5-.8 3.8-.4.3.4-.1 2.5-1.4 3.7-.2.2-.5.1-.4-.2.4-.8.9-2.1.9-2.5z"
+                      fill="#FF9900"
+                    />
+                  </svg>
+                  <span>Sign in with Amazon</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('signin')}
+                  className="btn-pill-secondary"
+                  style={{ fontSize: '0.72rem', padding: '0.55rem 1rem', width: '100%' }}
+                >
+                  <Sparkles size={14} /> OPEN FULL AUTH DIALOG / REGISTER
+                </button>
+              </div>
+
+              {/* Quick Fill Pills */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="utility-label" style={{ fontSize: '0.62rem', opacity: 0.65 }}>FILL DEMO EMAIL:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginRoleTab('admin');
+                    setEmail('heatsafe-admin-20261106@example.com');
+                    setPassword('');
+                    setLoginError(null);
+                  }}
+                  style={{
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    padding: '0.25rem 0.55rem',
+                    borderRadius: '999px',
+                    backgroundColor: 'rgba(1, 71, 46, 0.1)',
+                    border: '1px solid rgba(1, 71, 46, 0.2)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Admin Email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginRoleTab('user');
+                    setEmail('heatsafe-smoke-20261103@example.com');
+                    setPassword('');
+                    setLoginError(null);
+                  }}
+                  style={{
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    padding: '0.25rem 0.55rem',
+                    borderRadius: '999px',
+                    backgroundColor: 'rgba(1, 71, 46, 0.1)',
+                    border: '1px solid rgba(1, 71, 46, 0.2)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  User Email
+                </button>
+              </div>
+
+              {loginError && (
+                <div
+                  style={{
+                    padding: '0.75rem',
+                    backgroundColor: '#fee2e2',
+                    border: '1px solid #f87171',
+                    borderRadius: '0.85rem',
+                    color: '#b91c1c',
+                    fontSize: '0.78rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  {loginError}
+                </div>
+              )}
 
               <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
@@ -1051,15 +1204,82 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
               <div className="utility-label" style={{ marginBottom: '0.4rem' }}>
                 USER SUBMISSIONS ({pendingRequests.length} AWAITING VERIFICATION)
               </div>
-              <h3 style={{ fontFamily: 'Anton, sans-serif', fontSize: '2rem', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontFamily: 'Anton, sans-serif', fontSize: '2rem', marginBottom: '1rem' }}>
                 VERIFY USER COOL SPOT PHOTOS & COORDS
               </h3>
 
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '1.15rem' }}>
+                {(
+                  [
+                    ['pending', `PENDING (${pendingRequests.length})`],
+                    ['approved', `APPROVED (${approvedRequests.length})`],
+                    ['rejected', `REJECTED (${rejectedRequests.length})`],
+                    ['all', `ALL (${requests.length})`],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setQueueFilter(key)}
+                    style={{
+                      padding: '0.38rem 0.85rem',
+                      borderRadius: '999px',
+                      border: '1px solid rgba(1, 71, 46, 0.22)',
+                      backgroundColor: queueFilter === key ? 'var(--color-forest)' : 'var(--color-cream)',
+                      color: queueFilter === key ? 'var(--color-cream)' : 'var(--color-forest)',
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      letterSpacing: '0.1em',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {adminQueueError && (
+                <div
+                  role="alert"
+                  style={{
+                    backgroundColor: '#fee2e2',
+                    border: '1px solid #f87171',
+                    color: '#b91c1c',
+                    padding: '0.75rem 1rem',
+                    borderRadius: '0.75rem',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    marginBottom: '1rem',
+                  }}
+                >
+                  {adminQueueError}
+                </div>
+              )}
+
+              {adminQueueNotice && (
+                <div
+                  style={{
+                    backgroundColor: 'rgba(46, 125, 50, 0.14)',
+                    border: '1px solid #2E7D32',
+                    color: '#1B5E20',
+                    padding: '0.75rem 1rem',
+                    borderRadius: '0.75rem',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    marginBottom: '1rem',
+                  }}
+                >
+                  {adminQueueNotice}
+                </div>
+              )}
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '640px', overflowY: 'auto' }}>
-                {requests.length === 0 ? (
-                  <p style={{ opacity: 0.75 }}>No user Cool Spot requests in the queue yet.</p>
+                {visibleQueueRequests.length === 0 ? (
+                  <p style={{ opacity: 0.75 }}>
+                    No {queueFilter === 'all' ? '' : `${queueFilter} `}Cool Spot requests in this view.
+                  </p>
                 ) : (
-                  requests.map((req) => {
+                  visibleQueueRequests.map((req) => {
                     const logo = getLogoMeta(req.suggested_logo);
                     return (
                       <div
@@ -1113,15 +1333,18 @@ export const CoolSpotPortal: FC<CoolSpotPortalProps> = ({
                           <div style={{ display: 'flex', gap: '0.65rem' }}>
                             <button
                               type="button"
+                              disabled={processingRequestId === req.request_id}
                               onClick={() => handleApproveRequest(req)}
                               className="btn-pill-primary"
                               style={{ flex: 1, padding: '0.55rem 0.9rem', fontSize: '0.72rem' }}
                             >
-                              <CheckCircle2 size={15} /> VERIFY & PUBLISH
+                              <CheckCircle2 size={15} />
+                              {processingRequestId === req.request_id ? 'PROCESSING...' : 'VERIFY & PUBLISH'}
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleRejectRequest(req.request_id)}
+                              disabled={processingRequestId === req.request_id}
+                              onClick={() => handleRejectRequest(req)}
                               className="btn-pill-secondary"
                               style={{ padding: '0.55rem 0.9rem', fontSize: '0.72rem', color: '#C24134' }}
                             >
