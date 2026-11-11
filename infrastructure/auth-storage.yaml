@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Reference template for Heat-Safe auth tables and IAM roles. Create the Standard SecureString signing parameter separately in Parameter Store.
+
+Resources:
+  HeatSafeUsersTable:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: HeatSafe_Users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      DeletionProtectionEnabled: true
+      Tags:
+        - Key: Project
+          Value: HeatSafeRoutePlanner
+        - Key: Component
+          Value: Authentication
+
+  HeatSafeSessionsTable:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: HeatSafe_Sessions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      DeletionProtectionEnabled: true
+      Tags:
+        - Key: Project
+          Value: HeatSafeRoutePlanner
+        - Key: Component
+          Value: Authentication
+
+  HeatSafeAuthLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HeatSafeAuthLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: HeatSafeAuthDataAndSigningSecretAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt HeatSafeUsersTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt HeatSafeSessionsTable.Arn
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heatsafe/auth/jwt-signing-key
+      Tags:
+        - Key: Project
+          Value: HeatSafeRoutePlanner
+        - Key: Component
+          Value: Authentication
+
+  HeatSafeAuthorizerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HeatSafeAuthorizerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: HeatSafeAuthorizerSigningSecretReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heatsafe/auth/jwt-signing-key
+      Tags:
+        - Key: Project
+          Value: HeatSafeRoutePlanner
+        - Key: Component
+          Value: Authentication
+
+Outputs:
+  UsersTableName:
+    Description: DynamoDB user table name.
+    Value: !Ref HeatSafeUsersTable
+  SessionsTableName:
+    Description: DynamoDB session table name.
+    Value: !Ref HeatSafeSessionsTable
+  AuthLambdaRoleArn:
+    Description: Execution role for the auth API Lambda.
+    Value: !GetAtt HeatSafeAuthLambdaRole.Arn
+  AuthorizerLambdaRoleArn:
+    Description: Execution role for the API authorizer Lambda.
+    Value: !GetAtt HeatSafeAuthorizerLambdaRole.Arn
+  JwtSigningParameterName:
+    Description: Name of the manually created Standard SecureString parameter.
+    Value: /heatsafe/auth/jwt-signing-key
